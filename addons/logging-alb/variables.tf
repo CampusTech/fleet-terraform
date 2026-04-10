@@ -65,6 +65,18 @@ variable "kms_base_policy" {
   description = "Optional base KMS key-policy statements to apply to module-created CMKs before module-required service access statements are merged in. If null, the module defaults to the historical root `kms:*` statement."
 }
 
+variable "iam_role_name_prefix" {
+  description = "Optional shorter prefix for IAM role name_prefix fields, only used when enable_reencrypt_sweep = true (max 16 characters to fit within the 38-char AWS limit). Defaults to var.prefix."
+  type        = string
+  default     = null
+}
+
+variable "enable_reencrypt_sweep" {
+  description = "Enable the sweep and re-encrypt Lambda functions, EventBridge schedule, S3 bucket notification, and associated IAM roles."
+  type        = bool
+  default     = false
+}
+
 variable "extra_s3_log_policies" {
   type    = list(any)
   default = []
