@@ -16,19 +16,19 @@ module "fleet_lb" {
   version = "~> 12.0"
 
   project = var.project_id
-  name    = "${var.prefix}-lb" # e.g., fleet-lb
+  name    = "${var.prefix}-lb"
 
-  # SSL Configuration
   ssl                             = true
-  https_redirect                  = true # Enforce HTTPS
+  https_redirect                  = true
   managed_ssl_certificate_domains = [local.managed_ssl_domain]
+  server_tls_policy               = var.server_tls_policy
 
-  # Backend Configuration
   backends = {
     default = {
-      description = "Backend for Fleet Cloud Run service"
-      enable_cdn  = false # Set to true if you want Cloud CDN
-      protocol    = "HTTP"
+      description            = "Backend for Fleet Cloud Run service"
+      enable_cdn             = false
+      protocol               = "HTTP"
+      custom_request_headers = var.backend_custom_request_headers
       groups = [
         {
           group = google_compute_region_network_endpoint_group.neg.id
@@ -37,10 +37,9 @@ module "fleet_lb" {
 
       log_config = {
         enable      = true
-        sample_rate = 1.0 # Log all requests
+        sample_rate = 1.0
       }
 
-      # IAP (Identity-Aware Proxy) - disabled by default
       iap_config = {
         enable = false
       }
