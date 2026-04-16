@@ -100,6 +100,12 @@ variable "backend_custom_request_headers" {
   default     = []
 }
 
+variable "okta_subdomain" {
+  description = "Fully-qualified domain name for the Okta mTLS subdomain (e.g. 'okta.fleet.example.com'). When set, provisions a dedicated global IP, managed SSL cert, HTTPS proxy with the server_tls_policy attached, forwarding rule, DNS A record, and URL map redirect rule for the Okta SSO path."
+  type        = string
+  default     = null
+}
+
 variable "fleet_config" {
   type = object({
     installers_bucket_name = string
