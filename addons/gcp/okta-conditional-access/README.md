@@ -62,6 +62,45 @@ module.okta_conditional_access.redirect_rules
 # => [{ paths = [...], url_redirect = { host_redirect = "okta.fleet.example.com", ... } }]
 ```
 
+## First-time Deployment Notes
+
+When applying this addon to an existing Fleet deployment for the first time, Terraform must replace the managed SSL certificate (to add the Okta subdomain). The existing certificate cannot be deleted while it is attached to the HTTPS proxy, which causes a 409 conflict. Work around this with the following steps before running `terraform apply`:
+
+```sh
+# 1. Create a temporary cert covering both domains
+gcloud compute ssl-certificates create fleet-lb-cert-new \
+  --domains=<fleet-domain>,okta.<fleet-domain> \
+  --project=<project-id> \
+  --global
+
+# 2. Detach the old cert by swapping the proxy to the temp cert
+gcloud compute target-https-proxies update fleet-lb-https-proxy \
+  --ssl-certificates=fleet-lb-cert-new \
+  --project=<project-id> \
+  --global
+
+# 3. Delete the old cert (now detached)
+gcloud compute ssl-certificates delete fleet-lb-cert \
+  --project=<project-id> --global --quiet
+
+# 4. Apply — Terraform recreates fleet-lb-cert with both domains
+terraform apply
+
+# 5. Clean up the temporary cert
+gcloud compute ssl-certificates delete fleet-lb-cert-new \
+  --project=<project-id> --global --quiet
+```
+
+This is a one-time migration step. Future `terraform apply` runs will not require it.
+
+Additionally, if a previous `terraform apply` partially failed and left the old module-managed URL map (`fleet-lb-url-map`) stuck in state, remove it before applying:
+
+```sh
+terraform state rm 'module.fleet.module.fleet_lb.google_compute_url_map.default[0]'
+```
+
+This is safe — the new `google_compute_url_map.fleet` resource (outside the module) takes over URL map ownership.
+
 ## Provider Requirements
 
 | Name | Version |
