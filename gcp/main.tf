@@ -43,9 +43,7 @@ module "project_factory" {
     "monitoring.googleapis.com",
     "memorystore.googleapis.com",
     "serviceconsumermanagement.googleapis.com",
-    "networkconnectivity.googleapis.com",
-    "networksecurity.googleapis.com",
-    "certificatemanager.googleapis.com"
+    "networkconnectivity.googleapis.com"
   ]
 
   labels = var.labels
@@ -60,9 +58,9 @@ resource "google_secret_manager_secret" "mdm_wstep_cert" {
 }
 
 resource "google_secret_manager_secret_version" "mdm_wstep_cert" {
-  secret           = google_secret_manager_secret.mdm_wstep_cert.name
-  secret_data_wo   = var.windows_mdm_wstep_identity_cert
-  secret_data_wo_version = 1
+  secret                 = google_secret_manager_secret.mdm_wstep_cert.name
+  secret_data_wo         = var.windows_mdm_wstep_identity_cert
+  secret_data_wo_version = 2
 }
 
 resource "google_secret_manager_secret" "mdm_wstep_key" {
@@ -76,7 +74,7 @@ resource "google_secret_manager_secret" "mdm_wstep_key" {
 resource "google_secret_manager_secret_version" "mdm_wstep_key" {
   secret                 = google_secret_manager_secret.mdm_wstep_key.name
   secret_data_wo         = var.windows_mdm_wstep_identity_key
-  secret_data_wo_version = 1
+  secret_data_wo_version = 2
 }
 
 locals {
@@ -90,13 +88,6 @@ locals {
       version = "latest"
     }
   }
-}
-
-module "okta_conditional_access" {
-  source                  = "../addons/gcp/okta-conditional-access"
-  project_id              = module.project_factory.project_id
-  ca_certificate_pem_file = "${path.module}/resources/conditional-ca.pem"
-  fleet_domain            = "fleet.campusgroup.co"
 }
 
 module "fleet" {
@@ -115,8 +106,4 @@ module "fleet" {
   database_config = var.database_config
   region          = var.region
   location        = var.location
-
-  server_tls_policy              = module.okta_conditional_access.server_tls_policy
-  backend_custom_request_headers = [module.okta_conditional_access.client_cert_header]
-  okta_subdomain                 = "okta.fleet.campusgroup.co"
 }
