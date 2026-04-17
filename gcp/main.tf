@@ -60,8 +60,9 @@ resource "google_secret_manager_secret" "mdm_wstep_cert" {
 }
 
 resource "google_secret_manager_secret_version" "mdm_wstep_cert" {
-  secret      = google_secret_manager_secret.mdm_wstep_cert.name
-  secret_data = var.windows_mdm_wstep_identity_cert
+  secret           = google_secret_manager_secret.mdm_wstep_cert.name
+  secret_data_wo   = var.windows_mdm_wstep_identity_cert
+  secret_data_wo_version = 1
 }
 
 resource "google_secret_manager_secret" "mdm_wstep_key" {
@@ -73,8 +74,9 @@ resource "google_secret_manager_secret" "mdm_wstep_key" {
 }
 
 resource "google_secret_manager_secret_version" "mdm_wstep_key" {
-  secret      = google_secret_manager_secret.mdm_wstep_key.name
-  secret_data = var.windows_mdm_wstep_identity_key
+  secret                 = google_secret_manager_secret.mdm_wstep_key.name
+  secret_data_wo         = var.windows_mdm_wstep_identity_key
+  secret_data_wo_version = 1
 }
 
 locals {
