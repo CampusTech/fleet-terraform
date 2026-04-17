@@ -21,4 +21,11 @@ resource "google_network_security_server_tls_policy" "this" {
     client_validation_mode         = "REJECT_INVALID"
     client_validation_trust_config = google_certificate_manager_trust_config.this.id
   }
+
+  lifecycle {
+    # GCP sometimes returns the project number instead of the project ID in this
+    # field, causing spurious replace plans. The trust config itself is immutable
+    # so ignoring drift here is safe.
+    ignore_changes = [mtls_policy[0].client_validation_trust_config]
+  }
 }
