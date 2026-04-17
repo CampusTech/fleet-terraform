@@ -43,10 +43,58 @@ module "project_factory" {
     "monitoring.googleapis.com",
     "memorystore.googleapis.com",
     "serviceconsumermanagement.googleapis.com",
-    "networkconnectivity.googleapis.com"
+    "networkconnectivity.googleapis.com",
+    "networksecurity.googleapis.com",
+    "certificatemanager.googleapis.com"
   ]
 
   labels = var.labels
+}
+
+resource "google_secret_manager_secret" "mdm_wstep_cert" {
+  project   = module.project_factory.project_id
+  secret_id = "fleet-mdm-wstep-identity-cert"
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "mdm_wstep_cert" {
+  secret      = google_secret_manager_secret.mdm_wstep_cert.name
+  secret_data = var.windows_mdm_wstep_identity_cert
+}
+
+resource "google_secret_manager_secret" "mdm_wstep_key" {
+  project   = module.project_factory.project_id
+  secret_id = "fleet-mdm-wstep-identity-key"
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "mdm_wstep_key" {
+  secret      = google_secret_manager_secret.mdm_wstep_key.name
+  secret_data = var.windows_mdm_wstep_identity_key
+}
+
+locals {
+  windows_mdm_secret_env_vars = {
+    FLEET_MDM_WINDOWS_WSTEP_IDENTITY_CERT_BYTES = {
+      secret  = google_secret_manager_secret.mdm_wstep_cert.secret_id
+      version = "latest"
+    }
+    FLEET_MDM_WINDOWS_WSTEP_IDENTITY_KEY_BYTES = {
+      secret  = google_secret_manager_secret.mdm_wstep_key.secret_id
+      version = "latest"
+    }
+  }
+}
+
+module "okta_conditional_access" {
+  source                  = "../addons/gcp/okta-conditional-access"
+  project_id              = module.project_factory.project_id
+  ca_certificate_pem_file = "${path.module}/resources/conditional-ca.pem"
+  fleet_domain            = "fleet.campusgroup.co"
 }
 
 module "fleet" {
@@ -55,9 +103,18 @@ module "fleet" {
   dns_record_name = var.dns_record_name
   dns_zone_name   = var.dns_zone_name
   vpc_config      = var.vpc_config
-  fleet_config    = var.fleet_config
+  fleet_config    = merge(var.fleet_config, {
+    extra_secret_env_vars = merge(
+      coalesce(var.fleet_config.extra_secret_env_vars, {}),
+      local.windows_mdm_secret_env_vars,
+    )
+  })
   cache_config    = var.cache_config
   database_config = var.database_config
   region          = var.region
   location        = var.location
+
+  server_tls_policy              = module.okta_conditional_access.server_tls_policy
+  backend_custom_request_headers = [module.okta_conditional_access.client_cert_header]
+  okta_subdomain                 = "okta.fleet.campusgroup.co"
 }
