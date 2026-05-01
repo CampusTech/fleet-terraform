@@ -51,6 +51,44 @@ module "project_factory" {
   labels = var.labels
 }
 
+# -------------------------------------
+# Google Calendar Integration
+# -------------------------------------
+
+resource "google_service_account" "fleet_calendar" {
+  project      = module.project_factory.project_id
+  account_id   = "fleet-calendar-events"
+  display_name = "Fleet Calendar Events"
+  description  = "Service account for Fleet to create calendar events for end users with failing policies"
+}
+
+resource "google_service_account_key" "fleet_calendar" {
+  service_account_id = google_service_account.fleet_calendar.name
+}
+
+resource "google_secret_manager_secret" "fleet_calendar_key" {
+  project   = module.project_factory.project_id
+  secret_id = "fleet-calendar-service-account-key"
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "fleet_calendar_key" {
+  secret      = google_secret_manager_secret.fleet_calendar_key.name
+  secret_data = base64decode(google_service_account_key.fleet_calendar.private_key)
+}
+
+output "fleet_calendar_service_account_key_json" {
+  description = "Google Calendar service account key JSON — set this as FLEET_GOOGLE_CALENDAR_SERVICE_ACCOUNT_KEY in GitHub Actions secrets"
+  value       = base64decode(google_service_account_key.fleet_calendar.private_key)
+  sensitive   = true
+}
+
+# -------------------------------------
+# Windows MDM WSTEP Secrets
+# -------------------------------------
+
 resource "google_secret_manager_secret" "mdm_wstep_cert" {
   project   = module.project_factory.project_id
   secret_id = "fleet-mdm-wstep-identity-cert"
@@ -91,6 +129,10 @@ locals {
     }
   }
 }
+
+# -------------------------------------
+# Okta Conditional Access
+# -------------------------------------
 
 module "okta_conditional_access" {
   source                  = "../addons/gcp/okta-conditional-access"
