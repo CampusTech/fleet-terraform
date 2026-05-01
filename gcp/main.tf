@@ -43,7 +43,9 @@ module "project_factory" {
     "monitoring.googleapis.com",
     "memorystore.googleapis.com",
     "serviceconsumermanagement.googleapis.com",
-    "networkconnectivity.googleapis.com"
+    "networkconnectivity.googleapis.com",
+    "networksecurity.googleapis.com",
+    "certificatemanager.googleapis.com"
   ]
 
   labels = var.labels
@@ -90,6 +92,13 @@ locals {
   }
 }
 
+module "okta_conditional_access" {
+  source                  = "../addons/gcp/okta-conditional-access"
+  project_id              = module.project_factory.project_id
+  ca_certificate_pem_file = "${path.module}/resources/conditional-ca.pem"
+  fleet_domain            = "fleet.campusgroup.co"
+}
+
 module "fleet" {
   source          = "./byo-project"
   project_id      = module.project_factory.project_id
@@ -106,4 +115,8 @@ module "fleet" {
   database_config = var.database_config
   region          = var.region
   location        = var.location
+
+  server_tls_policy              = module.okta_conditional_access.server_tls_policy
+  backend_custom_request_headers = [module.okta_conditional_access.client_cert_header]
+  okta_subdomain                 = "okta.fleet.campusgroup.co"
 }
