@@ -316,6 +316,7 @@ output "fleet_env_vars" {
     FLEET_PUBSUB_RESULT_TOPIC       = google_pubsub_topic.result.name
     FLEET_PUBSUB_STATUS_TOPIC       = google_pubsub_topic.status.name
     FLEET_PUBSUB_AUDIT_TOPIC        = google_pubsub_topic.audit.name
+    FLEET_PUBSUB_ADD_ATTRIBUTES     = "true"
   }
 }
 ```
