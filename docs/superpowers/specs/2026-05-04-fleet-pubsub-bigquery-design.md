@@ -262,16 +262,23 @@ Authentication to BigQuery uses Application Default Credentials (the Cloud Run s
 
 ---
 
-## Terraform Module (`addons/gcp/pubsub-to-bigquery/`)
+## Terraform Modules
+
+The pipeline is split into two independent addons with a clean interface between them.
+
+---
+
+## Module 1: `addons/gcp/fleet-pubsub/`
+
+Fleet-facing. Consumer-agnostic — knows nothing about BQ or Cloud Run. Creates topics and grants Fleet permission to publish. Outputs the Fleet env vars needed to configure PubSub logging.
 
 ### Files
 
 ```
-addons/gcp/pubsub-to-bigquery/
-  main.tf        - PubSub topics, subscriptions, BQ dataset+tables, Cloud Run service
-  iam.tf         - service accounts, IAM bindings
+addons/gcp/fleet-pubsub/
+  main.tf        - PubSub topics, publisher IAM for fleet-run-sa
   variables.tf   - inputs
-  outputs.tf     - topic names, dataset ID, service URL
+  outputs.tf     - topic names, fleet_env_vars map
 ```
 
 ### Resources
@@ -281,6 +288,58 @@ addons/gcp/pubsub-to-bigquery/
 | `fleet-result-logs` | `google_pubsub_topic` | |
 | `fleet-status-logs` | `google_pubsub_topic` | |
 | `fleet-audit-logs` | `google_pubsub_topic` | |
+| IAM binding × 3 | `google_pubsub_topic_iam_member` | grants `var.fleet_sa_email` `roles/pubsub.publisher` on each topic |
+
+### Key Variables
+
+```hcl
+variable "project_id"         {}  # Fleet GCP project (required)
+variable "fleet_sa_email"     {}  # Email of existing fleet-run-sa (required)
+variable "result_topic_name"  { default = "fleet-result-logs" }
+variable "status_topic_name"  { default = "fleet-status-logs" }
+variable "audit_topic_name"   { default = "fleet-audit-logs" }
+```
+
+### Outputs
+
+```hcl
+output "result_topic_name" { value = google_pubsub_topic.result.name }
+output "status_topic_name" { value = google_pubsub_topic.status.name }
+output "audit_topic_name"  { value = google_pubsub_topic.audit.name }
+
+output "fleet_env_vars" {
+  value = {
+    FLEET_OSQUERY_RESULT_LOG_PLUGIN = "pubsub"
+    FLEET_OSQUERY_STATUS_LOG_PLUGIN = "pubsub"
+    FLEET_ACTIVITY_ENABLE_AUDIT_LOG = "true"
+    FLEET_PUBSUB_PROJECT            = var.project_id
+    FLEET_PUBSUB_RESULT_TOPIC       = google_pubsub_topic.result.name
+    FLEET_PUBSUB_STATUS_TOPIC       = google_pubsub_topic.status.name
+    FLEET_PUBSUB_AUDIT_TOPIC        = google_pubsub_topic.audit.name
+  }
+}
+```
+
+---
+
+## Module 2: `addons/gcp/pubsub-to-bigquery/`
+
+Consumer-facing. Takes topic names as inputs (from `fleet-pubsub` outputs). Creates subscriptions, BQ dataset/tables, Cloud Run service, and all IAM needed for the pipeline.
+
+### Files
+
+```
+addons/gcp/pubsub-to-bigquery/
+  main.tf        - push subscriptions, BQ dataset+tables, Cloud Run service
+  iam.tf         - service accounts, IAM bindings
+  variables.tf   - inputs
+  outputs.tf     - dataset ID, service URL
+```
+
+### Resources
+
+| Resource | Type | Notes |
+|---|---|---|
 | `fleet-result-logs-sub` | `google_pubsub_subscription` | push → Cloud Run `/ingest`, OIDC auth |
 | `fleet-status-logs-sub` | `google_pubsub_subscription` | push → Cloud Run `/ingest`, OIDC auth |
 | `fleet-audit-logs-sub` | `google_pubsub_subscription` | push → Cloud Run `/ingest`, OIDC auth |
@@ -295,56 +354,52 @@ addons/gcp/pubsub-to-bigquery/
 ### Key Variables
 
 ```hcl
-variable "project_id"              {}  # Fleet GCP project (required)
-variable "bq_project_id"           {}  # BQ project, defaults to project_id
-variable "region"                  { default = "us-central1" }
-variable "image"                   {}  # Artifact Registry image URL + tag (required)
-variable "bq_dataset_id"           { default = "fleet_logs" }
-variable "result_topic_name"       { default = "fleet-result-logs" }
-variable "status_topic_name"       { default = "fleet-status-logs" }
-variable "audit_topic_name"        { default = "fleet-audit-logs" }
-```
-
-### Wiring into `gcp/main.tf`
-
-```hcl
-module "pubsub_to_bigquery" {
-  source     = "../addons/gcp/pubsub-to-bigquery"
-  project_id = module.project_factory.project_id
-  image      = "us-central1-docker.pkg.dev/PROJECT/fleet/fleet-pubsub-bq:v1.0.0"
-}
-```
-
-Fleet Cloud Run gets these added to `extra_env_vars` by merging the module outputs into `fleet_config.extra_env_vars` in `gcp/main.tf`:
-
-```hcl
-module "fleet" {
-  ...
-  fleet_config = merge(var.fleet_config, {
-    extra_env_vars = merge(
-      coalesce(var.fleet_config.extra_env_vars, {}),
-      {
-        FLEET_OSQUERY_RESULT_LOG_PLUGIN = "pubsub"
-        FLEET_OSQUERY_STATUS_LOG_PLUGIN = "pubsub"
-        FLEET_ACTIVITY_ENABLE_AUDIT_LOG = "true"
-        FLEET_PUBSUB_PROJECT            = module.project_factory.project_id
-        FLEET_PUBSUB_RESULT_TOPIC       = module.pubsub_to_bigquery.result_topic_name
-        FLEET_PUBSUB_STATUS_TOPIC       = module.pubsub_to_bigquery.status_topic_name
-        FLEET_PUBSUB_AUDIT_TOPIC        = module.pubsub_to_bigquery.audit_topic_name
-      }
-    )
-  })
-}
+variable "project_id"         {}  # Fleet GCP project (required)
+variable "bq_project_id"      {}  # BQ project, defaults to project_id
+variable "region"             { default = "us-central1" }
+variable "image"              {}  # Artifact Registry image URL + tag (required)
+variable "bq_dataset_id"      { default = "fleet_logs" }
+variable "result_topic_name"  {}  # From fleet-pubsub module output (required)
+variable "status_topic_name"  {}  # From fleet-pubsub module output (required)
+variable "audit_topic_name"   {}  # From fleet-pubsub module output (required)
 ```
 
 ### Outputs
 
 ```hcl
-output "result_topic_name"  { value = google_pubsub_topic.result.name }
-output "status_topic_name"  { value = google_pubsub_topic.status.name }
-output "audit_topic_name"   { value = google_pubsub_topic.audit.name }
-output "bq_dataset_id"      { value = google_bigquery_dataset.fleet_logs.dataset_id }
-output "service_url"        { value = google_cloud_run_v2_service.ingest.uri }
+output "bq_dataset_id" { value = google_bigquery_dataset.fleet_logs.dataset_id }
+output "service_url"   { value = google_cloud_run_v2_service.ingest.uri }
+```
+
+---
+
+## Wiring into `gcp/main.tf`
+
+```hcl
+module "fleet_pubsub" {
+  source         = "../addons/gcp/fleet-pubsub"
+  project_id     = module.project_factory.project_id
+  fleet_sa_email = module.fleet.service_account_email
+}
+
+module "pubsub_to_bigquery" {
+  source            = "../addons/gcp/pubsub-to-bigquery"
+  project_id        = module.project_factory.project_id
+  result_topic_name = module.fleet_pubsub.result_topic_name
+  status_topic_name = module.fleet_pubsub.status_topic_name
+  audit_topic_name  = module.fleet_pubsub.audit_topic_name
+  image             = "us-central1-docker.pkg.dev/PROJECT/fleet/fleet-pubsub-bq:v1.0.0"
+}
+
+module "fleet" {
+  ...
+  fleet_config = merge(var.fleet_config, {
+    extra_env_vars = merge(
+      coalesce(var.fleet_config.extra_env_vars, {}),
+      module.fleet_pubsub.fleet_env_vars,
+    )
+  })
+}
 ```
 
 ---
@@ -353,11 +408,11 @@ output "service_url"        { value = google_cloud_run_v2_service.ingest.uri }
 
 | Principal | Resource | Role |
 |---|---|---|
+| `fleet-run-sa` (existing) | 3 PubSub topics | `roles/pubsub.publisher` |
 | `fleet-pubsub-bq-sa` | BQ dataset `fleet_logs` | `roles/bigquery.dataEditor` |
 | `fleet-pubsub-bq-sa` | BQ project | `roles/bigquery.jobUser` |
 | `fleet-pubsub-invoker-sa` | Cloud Run service `fleet-pubsub-bq` | `roles/run.invoker` |
 | PubSub service agent | `fleet-pubsub-invoker-sa` | `roles/iam.serviceAccountTokenCreator` |
-| `fleet-run-sa` (existing Fleet SA) | PubSub topics | `roles/pubsub.publisher` |
 
 ---
 
