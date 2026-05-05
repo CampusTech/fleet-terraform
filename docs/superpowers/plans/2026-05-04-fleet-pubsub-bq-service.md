@@ -8,6 +8,15 @@
 
 **Tech Stack:** Go 1.22+, `cloud.google.com/go/bigquery`, standard library `net/http`. No frameworks. Docker multi-stage build. GitHub Actions CI to Artifact Registry.
 
+**Branch:** `feat/fleet-pubsub-bq` — this plan lives in the new `campus-it/fleet-pubsub-bq` repo. Create the repo first, then:
+
+```bash
+git init fleet-pubsub-bq && cd fleet-pubsub-bq
+git checkout -b feat/initial-implementation
+```
+
+All commits in this plan go on `feat/initial-implementation`. Open a PR to `main` when Task 9 is complete.
+
 ---
 
 ## File Map

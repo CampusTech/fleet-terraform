@@ -8,6 +8,12 @@
 
 **Tech Stack:** Terraform ~> 1.11, hashicorp/google >= 6.35.0, Google Cloud PubSub, BigQuery, Cloud Run v2.
 
+**Branch:** `feat/fleet-pubsub-bigquery` — create this branch in `fleet-terraform` before starting Task 1.
+
+```bash
+git checkout main && git pull && git checkout -b feat/fleet-pubsub-bigquery
+```
+
 ---
 
 ## File Map
