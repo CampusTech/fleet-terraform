@@ -2,11 +2,20 @@ locals {
   # Clean the DNS record name for use in managed SSL cert domains (remove trailing dot)
   managed_ssl_domain = trim(var.dns_record_name, ".")
 
-  # Construct the backend service self_link directly to avoid a circular dependency.
-  # The lb-http module names the default backend service "${name}-backend-default".
-  # We cannot reference module.fleet_lb.backend_services here because that would
-  # create url_map → fleet_lb AND fleet_lb → url_map (via create_url_map=false), forming a cycle.
-  fleet_backend_self_link = "https://www.googleapis.com/compute/v1/projects/${var.project_id}/global/backendServices/${var.prefix}-lb-backend-default"
+  # Construct backend service self_links directly to avoid a circular dependency.
+  # The lb-http module names backend services "${name}-backend-${key}".
+  fleet_backend_self_link      = "https://www.googleapis.com/compute/v1/projects/${var.project_id}/global/backendServices/${var.prefix}-lb-backend-default"
+  fleet_bulk_backend_self_link = "https://www.googleapis.com/compute/v1/projects/${var.project_id}/global/backendServices/${var.prefix}-lb-backend-bulk"
+
+  fleet_bulk_paths = [
+    "/api/fleet/orbit/software_install/package",
+    "/api/latest/fleet/software/*",
+    "/api/v1/fleet/software/*",
+    "/api/latest/fleet/mdm/apple/installers",
+    "/api/latest/fleet/mdm/apple/installers/*",
+    "/api/v1/fleet/mdm/apple/installers",
+    "/api/v1/fleet/mdm/apple/installers/*",
+  ]
 }
 
 # Create/Manage the DNS Zone in Cloud DNS
@@ -16,9 +25,8 @@ resource "google_dns_managed_zone" "fleet_dns_zone" {
   dns_name = var.dns_zone_name
 }
 
-# URL map — managed directly so we can inject the Okta SSO redirect path rule.
-# When okta_subdomain is null this behaves identically to the default URL map
-# the LB module would have created.
+# URL map — managed directly so we can inject the Okta SSO redirect path rule
+# and route large software installer transfers to the h2c backend.
 resource "google_compute_url_map" "fleet" {
   project         = var.project_id
   name            = "${var.prefix}-lb"
@@ -37,6 +45,11 @@ resource "google_compute_url_map" "fleet" {
   path_matcher {
     name            = "default"
     default_service = local.fleet_backend_self_link
+
+    path_rule {
+      paths   = local.fleet_bulk_paths
+      service = local.fleet_bulk_backend_self_link
+    }
   }
 
   # Okta subdomain host rule — redirects SSO path, forwards everything else
@@ -53,6 +66,11 @@ resource "google_compute_url_map" "fleet" {
     content {
       name            = "okta"
       default_service = local.fleet_backend_self_link
+
+      path_rule {
+        paths   = local.fleet_bulk_paths
+        service = local.fleet_bulk_backend_self_link
+      }
 
       path_rule {
         paths = ["/api/fleet/conditional_access/idp/sso"]
@@ -79,7 +97,7 @@ module "fleet_lb" {
   https_redirect                  = true
   managed_ssl_certificate_domains = [local.managed_ssl_domain]
 
-  # Use our custom URL map so we can inject Okta redirect rules
+  # Use our custom URL map so we can inject Okta redirect rules and h2c path routing.
   create_url_map = false
   url_map        = google_compute_url_map.fleet.self_link
 
@@ -104,10 +122,32 @@ module "fleet_lb" {
         enable = false
       }
     }
+
+    bulk = {
+      description            = "h2c backend for large Fleet software installer transfers"
+      enable_cdn             = false
+      protocol               = "HTTP"
+      custom_request_headers = var.backend_custom_request_headers
+      groups = [
+        {
+          group = google_compute_region_network_endpoint_group.bulk_neg.id
+        }
+      ]
+
+      log_config = {
+        enable      = true
+        sample_rate = 1.0
+      }
+
+      iap_config = {
+        enable = false
+      }
+    }
   }
 
   depends_on = [
     google_compute_region_network_endpoint_group.neg,
+    google_compute_region_network_endpoint_group.bulk_neg,
   ]
 }
 
@@ -159,8 +199,8 @@ resource "google_compute_target_https_proxy" "okta" {
   project = var.project_id
   name    = "${var.prefix}-okta-https-proxy"
 
-  url_map          = google_compute_url_map.fleet.self_link
-  ssl_certificates = [google_compute_managed_ssl_certificate.okta[0].self_link]
+  url_map           = google_compute_url_map.fleet.self_link
+  ssl_certificates  = [google_compute_managed_ssl_certificate.okta[0].self_link]
   server_tls_policy = var.server_tls_policy
 }
 
