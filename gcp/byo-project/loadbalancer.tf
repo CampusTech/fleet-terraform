@@ -9,8 +9,12 @@ locals {
 
   fleet_bulk_paths = [
     "/api/fleet/orbit/software_install/package",
-    "/api/latest/fleet/software/*",
-    "/api/v1/fleet/software/*",
+    "/api/latest/fleet/software/package",
+    # Classic global external URL maps only support terminal wildcards in
+    # pathRules. Use this narrowest compatible match for package token downloads.
+    "/api/latest/fleet/software/titles/*",
+    "/api/v1/fleet/software/package",
+    "/api/v1/fleet/software/titles/*",
     "/api/latest/fleet/mdm/apple/installers",
     "/api/latest/fleet/mdm/apple/installers/*",
     "/api/v1/fleet/mdm/apple/installers",
@@ -82,6 +86,27 @@ resource "google_compute_url_map" "fleet" {
         }
       }
     }
+  }
+
+  test {
+    description = "software titles metadata stays on the primary backend"
+    host        = local.managed_ssl_domain
+    path        = "/api/latest/fleet/software/titles"
+    service     = local.fleet_backend_self_link
+  }
+
+  test {
+    description = "software package uploads use the h2c backend"
+    host        = local.managed_ssl_domain
+    path        = "/api/latest/fleet/software/package"
+    service     = local.fleet_bulk_backend_self_link
+  }
+
+  test {
+    description = "software package token downloads use the h2c backend"
+    host        = local.managed_ssl_domain
+    path        = "/api/latest/fleet/software/titles/1469/package/token/68d9ba68-1fad-44b2-8d73-6d7bfda9ac27"
+    service     = local.fleet_bulk_backend_self_link
   }
 }
 
