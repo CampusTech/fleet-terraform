@@ -19,6 +19,16 @@ locals {
     "/api/latest/fleet/mdm/apple/installers/*",
     "/api/v1/fleet/mdm/apple/installers",
     "/api/v1/fleet/mdm/apple/installers/*",
+    # MDM bootstrap package uploads. Only the POST upload endpoints skip the
+    # request body size limit server-side, so route those exact paths to the
+    # h2c backend. Exact (non-wildcard) matches keep the small GET
+    # metadata/summary and DELETE endpoints on the primary backend.
+    "/api/latest/fleet/bootstrap",
+    "/api/v1/fleet/bootstrap",
+    "/api/latest/fleet/mdm/bootstrap",
+    "/api/v1/fleet/mdm/bootstrap",
+    "/api/latest/fleet/mdm/apple/bootstrap",
+    "/api/v1/fleet/mdm/apple/bootstrap",
   ]
 }
 
@@ -107,6 +117,27 @@ resource "google_compute_url_map" "fleet" {
     host        = local.managed_ssl_domain
     path        = "/api/latest/fleet/software/titles/1469/package/token/68d9ba68-1fad-44b2-8d73-6d7bfda9ac27"
     service     = local.fleet_bulk_backend_self_link
+  }
+
+  test {
+    description = "bootstrap package uploads use the h2c backend"
+    host        = local.managed_ssl_domain
+    path        = "/api/latest/fleet/bootstrap"
+    service     = local.fleet_bulk_backend_self_link
+  }
+
+  test {
+    description = "bootstrap package metadata stays on the primary backend"
+    host        = local.managed_ssl_domain
+    path        = "/api/latest/fleet/bootstrap/0/metadata"
+    service     = local.fleet_backend_self_link
+  }
+
+  test {
+    description = "bootstrap package summary stays on the primary backend"
+    host        = local.managed_ssl_domain
+    path        = "/api/latest/fleet/bootstrap/summary"
+    service     = local.fleet_backend_self_link
   }
 }
 
