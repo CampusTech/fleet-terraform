@@ -35,6 +35,15 @@ locals {
     FLEET_S3_SOFTWARE_INSTALLERS_ENDPOINT_URL        = "https://storage.googleapis.com"
     FLEET_S3_SOFTWARE_INSTALLERS_FORCE_S3_PATH_STYLE = "true"
     FLEET_S3_SOFTWARE_INSTALLERS_REGION              = var.region
+    # Allow user-authored DDM declarations of type
+    # com.apple.configuration.softwareupdate.enforcement.specific so we can
+    # pin iPad Zoom Rooms to a specific iPadOS target version with a hard
+    # deadline (built-in ipados_updates always targets Apple's latest, which
+    # blocked Setup Assistant on factory-fresh iPads). Side-effect: also
+    # un-blocks custom FileVault2 / FDEFileVaultOptions mobileconfig
+    # payloads, but we only use Fleet's built-in enable_disk_encryption on
+    # every fleet, so there is no conflict today.
+    FLEET_MDM_ENABLE_CUSTOM_OS_UPDATES_AND_FILEVAULT = "true"
   })
   fleet_bulk_env_vars = merge(local.fleet_env_vars, {
     FLEET_SERVER_FORCE_H2C = "true"
