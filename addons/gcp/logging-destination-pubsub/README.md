@@ -7,7 +7,7 @@ Fleet's [`pubsub` log plugin](https://fleetdm.com/guides/log-destinations) publi
 ## Log streams
 
 | Log stream | Default topic name | Fleet env var | Toggle |
-|------------|--------------------|---------------|--------|
+| ---------- | ------------------ | ------------- | ------ |
 | Osquery scheduled query results | `fleet-osquery-results` | `FLEET_PUBSUB_RESULT_TOPIC` | `enable_results_topic` |
 | Osquery status | `fleet-osquery-status` | `FLEET_PUBSUB_STATUS_TOPIC` | `enable_status_topic` |
 | Fleet activity audit | `fleet-audit` | `FLEET_PUBSUB_AUDIT_TOPIC` | `enable_audit_topic` |
@@ -42,6 +42,19 @@ The module emits:
 - `publisher_service_account_email` — bind this to your Fleet workload (Cloud Run service account, GKE Workload Identity, etc.) so Fleet can publish.
 - `topic_ids` / `topic_names` — for wiring downstream subscribers.
 - `fleet_extra_environment_variables` — drop-in env map for Fleet, including the plugin selectors and topic names.
+
+If Fleet already runs as an existing service account and you'd rather grant publisher to that SA directly instead of using the module's auto-created SA, pass it via `additional_publisher_members`:
+
+```hcl
+module "fleet_pubsub_logging" {
+  source     = "github.com/fleetdm/fleet-terraform//addons/gcp/logging-destination-pubsub?ref=main"
+  project_id = "my-fleet-project"
+
+  additional_publisher_members = [
+    "serviceAccount:${module.fleet.fleet_service_account_email}",
+  ]
+}
+```
 
 ## Permissions
 

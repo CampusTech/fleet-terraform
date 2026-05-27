@@ -21,6 +21,12 @@ variable "publisher_service_account_id" {
   default     = "fleet-log-publisher"
 }
 
+variable "additional_publisher_members" {
+  type        = list(string)
+  description = "Extra IAM members (fully qualified, e.g. \"serviceAccount:foo@bar.iam.gserviceaccount.com\") to grant roles/pubsub.publisher on each enabled topic, in addition to the module's own publisher service account. Use this when Fleet runs as an existing service account that should publish directly without impersonation."
+  default     = []
+}
+
 variable "enable_results_topic" {
   type        = bool
   description = "Create a topic for osquery scheduled query result logs and wire FLEET_OSQUERY_RESULT_LOG_PLUGIN to pubsub."

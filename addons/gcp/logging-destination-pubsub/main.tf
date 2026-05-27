@@ -51,3 +51,18 @@ resource "google_pubsub_topic_iam_member" "publisher" {
   role    = "roles/pubsub.publisher"
   member  = "serviceAccount:${google_service_account.publisher.email}"
 }
+
+resource "google_pubsub_topic_iam_member" "additional_publishers" {
+  for_each = {
+    for pair in setproduct(keys(google_pubsub_topic.fleet), var.additional_publisher_members) :
+    "${pair[0]}:${pair[1]}" => {
+      topic_key = pair[0]
+      member    = pair[1]
+    }
+  }
+
+  project = google_pubsub_topic.fleet[each.value.topic_key].project
+  topic   = google_pubsub_topic.fleet[each.value.topic_key].name
+  role    = "roles/pubsub.publisher"
+  member  = each.value.member
+}
