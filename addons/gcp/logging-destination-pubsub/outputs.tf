@@ -24,8 +24,8 @@ output "fleet_extra_environment_variables" {
 }
 
 output "publisher_service_account_email" {
-  description = "Email of the service account Fleet should run as (or impersonate) to publish to these topics. Bind this to the Fleet workload (Cloud Run service account, GKE Workload Identity, etc.)."
-  value       = google_service_account.publisher.email
+  description = "Email of the service account Fleet should run as (or impersonate) to publish to these topics. Bind this to the Fleet workload (Cloud Run service account, GKE Workload Identity, etc.). Null when `create_publisher_service_account` is false."
+  value       = try(google_service_account.publisher[0].email, null)
 }
 
 output "topic_ids" {

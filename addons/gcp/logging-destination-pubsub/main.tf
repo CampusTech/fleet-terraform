@@ -37,6 +37,8 @@ resource "google_pubsub_topic" "fleet" {
 }
 
 resource "google_service_account" "publisher" {
+  count = var.create_publisher_service_account ? 1 : 0
+
   project      = var.project_id
   account_id   = var.publisher_service_account_id
   display_name = "Fleet log publisher"
@@ -44,12 +46,12 @@ resource "google_service_account" "publisher" {
 }
 
 resource "google_pubsub_topic_iam_member" "publisher" {
-  for_each = google_pubsub_topic.fleet
+  for_each = var.create_publisher_service_account ? google_pubsub_topic.fleet : {}
 
   project = each.value.project
   topic   = each.value.name
   role    = "roles/pubsub.publisher"
-  member  = "serviceAccount:${google_service_account.publisher.email}"
+  member  = "serviceAccount:${google_service_account.publisher[0].email}"
 }
 
 resource "google_pubsub_topic_iam_member" "additional_publishers" {
