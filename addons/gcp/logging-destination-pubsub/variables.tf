@@ -15,9 +15,15 @@ variable "message_retention_duration" {
   default     = "604800s" # 7 days
 }
 
+variable "create_publisher_service_account" {
+  type        = bool
+  description = "If true, create a dedicated service account and grant it roles/pubsub.publisher on each enabled topic. Set false when Fleet already runs as an existing service account that you'll grant publisher to via `additional_publisher_members`."
+  default     = true
+}
+
 variable "publisher_service_account_id" {
   type        = string
-  description = "Account ID (the part before @PROJECT.iam.gserviceaccount.com) for the service account Fleet uses to publish logs."
+  description = "Account ID (the part before @PROJECT.iam.gserviceaccount.com) for the service account Fleet uses to publish logs. Only used when `create_publisher_service_account` is true."
   default     = "fleet-log-publisher"
 }
 
