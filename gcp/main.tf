@@ -208,7 +208,8 @@ module "fleet" {
 # The 3 streaming jobs each pin ≥1 n1-standard-2 worker (~$50/mo idle).
 
 locals {
-  datadog_logs_url   = "https://gcp-intake.logs.us5.datadoghq.com/api/v2/logs"
+  # Template only accepts PROTOCOL://HOST[:PORT] — it appends the /api/v2/logs path itself.
+  datadog_logs_url   = "https://http-intake.logs.us5.datadoghq.com"
   datadog_log_topics = module.logging_destination_pubsub.topic_names
 }
 
@@ -218,6 +219,14 @@ resource "google_secret_manager_secret" "datadog_api_key" {
   replication {
     auto {}
   }
+}
+
+resource "google_storage_bucket_object" "datadog_udf" {
+  for_each = local.datadog_log_topics
+
+  name    = "udf/${each.key}.js"
+  bucket  = google_storage_bucket.dataflow_staging.name
+  content = templatefile("${path.module}/resources/udf.js.tftpl", { log_stream = each.key })
 }
 
 resource "google_storage_bucket" "dataflow_staging" {
@@ -248,6 +257,22 @@ resource "google_project_iam_member" "dataflow_datadog_worker" {
   project = module.project_factory.project_id
   role    = "roles/dataflow.worker"
   member  = "serviceAccount:${google_service_account.dataflow_datadog.email}"
+}
+
+# The Dataflow service agent (Google-managed) launches jobs using the worker
+# SA's identity. It needs serviceAccountUser on the worker SA to do that.
+resource "google_service_account_iam_member" "dataflow_service_agent_uses_worker" {
+  service_account_id = google_service_account.dataflow_datadog.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:service-${module.project_factory.project_number}@dataflow-service-producer-prod.iam.gserviceaccount.com"
+}
+
+# Required: the Dataflow service agent needs serviceAccountTokenCreator on the
+# worker SA in the v1beta3+ Dataflow runner.
+resource "google_service_account_iam_member" "dataflow_service_agent_token_creator" {
+  service_account_id = google_service_account.dataflow_datadog.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:service-${module.project_factory.project_number}@dataflow-service-producer-prod.iam.gserviceaccount.com"
 }
 
 resource "google_storage_bucket_iam_member" "dataflow_datadog_staging" {
@@ -321,15 +346,24 @@ resource "google_dataflow_job" "pubsub_to_datadog" {
   machine_type          = "n1-standard-2"
   max_workers           = 3
 
+  # Run workers in the Fleet VPC so they share the existing Cloud NAT path
+  # (workers have no external IPs; egress to Datadog goes through fleet-vpc-nat).
+  network          = module.fleet.vpc_network_name
+  subnetwork       = "regions/${var.region}/subnetworks/${module.fleet.vpc_subnets_names[0]}"
+  ip_configuration = "WORKER_IP_PRIVATE"
+
   parameters = {
-    inputSubscription     = google_pubsub_subscription.datadog_input[each.key].id
-    url                   = local.datadog_logs_url
-    apiKeySource          = "SECRET_MANAGER"
-    apiKeySecretId        = "projects/${module.project_factory.project_id}/secrets/${google_secret_manager_secret.datadog_api_key.secret_id}/versions/latest"
-    outputDeadletterTopic = google_pubsub_topic.datadog_deadletter[each.key].id
-    includePubsubMessage  = "true"
-    batchCount            = "100"
-    parallelism           = "4"
+    inputSubscription                            = google_pubsub_subscription.datadog_input[each.key].id
+    url                                          = local.datadog_logs_url
+    apiKeySource                                 = "SECRET_MANAGER"
+    apiKeySecretId                               = "projects/${module.project_factory.project_id}/secrets/${google_secret_manager_secret.datadog_api_key.secret_id}/versions/latest"
+    outputDeadletterTopic                        = google_pubsub_topic.datadog_deadletter[each.key].id
+    includePubsubMessage                         = "true"
+    batchCount                                   = "100"
+    parallelism                                  = "4"
+    javascriptTextTransformGcsPath               = "gs://${google_storage_bucket.dataflow_staging.name}/${google_storage_bucket_object.datadog_udf[each.key].name}"
+    javascriptTextTransformFunctionName          = "process"
+    javascriptTextTransformReloadIntervalMinutes = "60"
   }
 
   labels = var.labels

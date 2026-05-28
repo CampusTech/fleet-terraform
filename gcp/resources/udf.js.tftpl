@@ -1,0 +1,63 @@
+/**
+ * Dataflow UDF for the Pub/Sub → Datadog template.
+ *
+ * Input: a JSON string with {data, attributes, messageId} when
+ * includePubsubMessage=true. `data` is the original Fleet log payload;
+ * `attributes` are the Pub/Sub message attributes set by Fleet's pubsub
+ * plugin (host_uuid, hostname, name, timestamp — populated on the
+ * osquery-results topic when FLEET_PUBSUB_ADD_ATTRIBUTES=true).
+ *
+ * Output: a JSON string. The Pub/Sub-to-Datadog template looks for a
+ * top-level `_metadata` object and lifts ddsource/ddtags/service/hostname
+ * into the corresponding Datadog event fields.
+ *
+ * Per-stream values are injected by Terraform at apply time:
+ *   LOG_STREAM = "${log_stream}"  (audit | status | results)
+ */
+function process(inJson) {
+  var LOG_STREAM = "${log_stream}";
+
+  var msg;
+  try {
+    msg = JSON.parse(inJson);
+  } catch (e) {
+    // Not JSON — pass through as raw message with our metadata.
+    return JSON.stringify({
+      _metadata: {
+        ddsource: "fleet",
+        service: "fleet",
+        ddtags: "env:prod,team:it-infrastructure,log_stream:" + LOG_STREAM,
+        message: inJson,
+      },
+    });
+  }
+
+  var attrs = (msg && msg.attributes) || {};
+  var data = (msg && msg.data) || {};
+
+  // Hostname: prefer Pub/Sub attribute (osquery results), fall back to
+  // decorations.hostname (osquery status), then fleet-api for audit.
+  var hostname =
+    attrs.hostname ||
+    (data && data.decorations && data.decorations.hostname) ||
+    "fleet-api";
+
+  // Build tag string. Pub/Sub attributes get promoted to discrete tags so
+  // they're filterable in Datadog: query_name:<name>, host_uuid:<uuid>.
+  var tags = [
+    "env:prod",
+    "team:it-infrastructure",
+    "log_stream:" + LOG_STREAM,
+  ];
+  if (attrs.name) tags.push("query_name:" + attrs.name);
+  if (attrs.host_uuid) tags.push("host_uuid:" + attrs.host_uuid);
+
+  msg._metadata = {
+    ddsource: "fleet",
+    service: "fleet",
+    hostname: hostname,
+    ddtags: tags.join(","),
+  };
+
+  return JSON.stringify(msg);
+}
