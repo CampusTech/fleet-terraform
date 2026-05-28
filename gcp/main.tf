@@ -141,13 +141,39 @@ module "okta_conditional_access" {
   fleet_domain            = "fleet.campusgroup.co"
 }
 
+# -------------------------------------
+# Pub/Sub Logging Destination
+# -------------------------------------
+
+module "logging_destination_pubsub" {
+  source     = "../addons/gcp/logging-destination-pubsub"
+  project_id = module.project_factory.project_id
+  labels     = var.labels
+
+  add_attributes                   = true
+  create_publisher_service_account = false
+}
+
+resource "google_pubsub_topic_iam_member" "fleet_run_sa_publisher" {
+  for_each = module.logging_destination_pubsub.topic_names
+
+  project = module.project_factory.project_id
+  topic   = each.value
+  role    = "roles/pubsub.publisher"
+  member  = "serviceAccount:${module.fleet.fleet_service_account_email}"
+}
+
 module "fleet" {
   source          = "./byo-project"
   project_id      = module.project_factory.project_id
   dns_record_name = var.dns_record_name
   dns_zone_name   = var.dns_zone_name
   vpc_config      = var.vpc_config
-  fleet_config    = merge(var.fleet_config, {
+  fleet_config = merge(var.fleet_config, {
+    extra_env_vars = merge(
+      coalesce(var.fleet_config.extra_env_vars, {}),
+      module.logging_destination_pubsub.fleet_extra_environment_variables,
+    )
     extra_secret_env_vars = merge(
       coalesce(var.fleet_config.extra_secret_env_vars, {}),
       local.windows_mdm_secret_env_vars,
