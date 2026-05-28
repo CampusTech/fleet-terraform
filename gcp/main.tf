@@ -186,7 +186,11 @@ module "fleet" {
   dns_zone_name   = var.dns_zone_name
   vpc_config      = var.vpc_config
   fleet_config = merge(var.fleet_config, {
-    image_tag = local.fleet_geolite2_image
+    # Pin to the pushed manifest digest, not the tag. The kreuzwerker/docker
+    # provider pushes the manifest before the tag reference settles, so a
+    # tag-based reference would race; the digest output is published only
+    # after the push is fully complete.
+    image_tag = module.geolite2.image_digest
     extra_env_vars = merge(
       coalesce(var.fleet_config.extra_env_vars, {}),
       module.logging_destination_pubsub.fleet_extra_environment_variables,
