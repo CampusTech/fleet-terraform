@@ -164,3 +164,9 @@ variable "fleet_config" {
     extra_secret_env_vars  = {}
   }
 }
+
+variable "maxmind_license_key" {
+  type        = string
+  description = "Maxmind license key used to download GeoLite2-City for the custom Fleet image."
+  sensitive   = true
+}
