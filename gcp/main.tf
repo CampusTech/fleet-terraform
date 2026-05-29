@@ -201,6 +201,12 @@ module "fleet" {
       local.windows_mdm_secret_env_vars,
     )
   })
+  # OTel env vars only on the Cloud Run services — not on the migration job.
+  # The job runs as a Cloud Run Job (no sidecars), so localhost:4317 has no
+  # listener and the exporter would log retry errors during the brief job run.
+  service_only_env_vars = local.fleet_otel_env_vars
+  sidecar_containers    = [local.datadog_sidecar]
+
   cache_config    = var.cache_config
   database_config = var.database_config
   region          = var.region

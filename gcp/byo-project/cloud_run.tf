@@ -17,18 +17,18 @@ locals {
     }
   })
   fleet_env_vars = merge(var.fleet_config.extra_env_vars, {
-    FLEET_LICENSE_KEY                                = var.fleet_config.license_key
-    FLEET_SERVER_FORCE_H2C                           = var.fleet_config.use_h2c
-    FLEET_MYSQL_PROTOCOL                             = "tcp"
-    FLEET_MYSQL_ADDRESS                              = "${module.mysql.private_ip_address}:3306"
-    FLEET_MYSQL_USERNAME                             = var.database_config.database_user
-    FLEET_MYSQL_DATABASE                             = var.database_config.database_name
-    FLEET_REDIS_ADDRESS                              = "${module.memstore.host}:${module.memstore.port}"
-    FLEET_REDIS_USE_TLS                              = "false"
-    FLEET_UPGRADES_ALLOW_MISSING_MIGRATIONS          = "1"
-    FLEET_LOGGING_JSON                               = "true"
-    FLEET_LOGGING_DEBUG                              = var.fleet_config.debug_logging
-    FLEET_SERVER_TLS                                 = "false"
+    FLEET_LICENSE_KEY                       = var.fleet_config.license_key
+    FLEET_SERVER_FORCE_H2C                  = var.fleet_config.use_h2c
+    FLEET_MYSQL_PROTOCOL                    = "tcp"
+    FLEET_MYSQL_ADDRESS                     = "${module.mysql.private_ip_address}:3306"
+    FLEET_MYSQL_USERNAME                    = var.database_config.database_user
+    FLEET_MYSQL_DATABASE                    = var.database_config.database_name
+    FLEET_REDIS_ADDRESS                     = "${module.memstore.host}:${module.memstore.port}"
+    FLEET_REDIS_USE_TLS                     = "false"
+    FLEET_UPGRADES_ALLOW_MISSING_MIGRATIONS = "1"
+    FLEET_LOGGING_JSON                      = "true"
+    FLEET_LOGGING_DEBUG                     = var.fleet_config.debug_logging
+    FLEET_SERVER_TLS                        = "false"
     # Software installers (also stores software title icons and MDM
     # bootstrap packages under hard-coded sub-prefixes).
     FLEET_S3_SOFTWARE_INSTALLERS_BUCKET              = google_storage_bucket.software_installers.id
@@ -55,18 +55,24 @@ locals {
     # every fleet, so there is no conflict today.
     FLEET_MDM_ENABLE_CUSTOM_OS_UPDATES_AND_FILEVAULT = "true"
   })
-  fleet_bulk_env_vars = merge(local.fleet_env_vars, {
+  # fleet_env_vars is the safe baseline that works in any execution context.
+  # The migration job uses it directly (Cloud Run Job, no sidecars, no OTLP
+  # endpoint). The services layer service_only_env_vars on top — that's where
+  # things like OTel exporter endpoints live, which the job can't reach.
+  fleet_service_env_vars = merge(local.fleet_env_vars, var.service_only_env_vars)
+  fleet_bulk_env_vars = merge(local.fleet_service_env_vars, {
     FLEET_SERVER_FORCE_H2C = "true"
   })
 
   fleet_vpc_network_id = module.vpc.network_id
   # Use the direct construction for the subnet ID key as discussed
   fleet_vpc_subnet_id = "fleet-subnet"
+
+  sidecar_container_names = [for c in var.sidecar_containers : c.container_name]
 }
 
 module "fleet-service" {
-  source  = "GoogleCloudPlatform/cloud-run/google//modules/v2"
-  version = "0.17.2"
+  source = "../vendor/cloud-run-v2"
 
   service_name                  = "fleet-api"
   project_id                    = var.project_id
@@ -95,9 +101,11 @@ module "fleet-service" {
     max_instance_count = var.fleet_config.max_instance_count
   }
 
-  containers = [
+  containers = concat([
     {
-      container_image = local.fleet_image_tag
+      container_name       = "fleet"
+      container_image      = local.fleet_image_tag
+      depends_on_container = local.sidecar_container_names
       ports = {
         name           = var.fleet_config.use_h2c ? "h2c" : "http1"
         container_port = 8080
@@ -134,15 +142,14 @@ module "fleet-service" {
         limits = local.fleet_resources_limits
       }
 
-      env_vars        = local.fleet_env_vars
+      env_vars        = local.fleet_service_env_vars
       env_secret_vars = local.fleet_secrets_env_vars
     }
-  ]
+  ], var.sidecar_containers)
 }
 
 module "fleet-bulk-service" {
-  source  = "GoogleCloudPlatform/cloud-run/google//modules/v2"
-  version = "0.17.2"
+  source = "../vendor/cloud-run-v2"
 
   service_name                  = "fleet-api-bulk"
   project_id                    = var.project_id
@@ -171,9 +178,11 @@ module "fleet-bulk-service" {
     max_instance_count = var.fleet_config.max_instance_count
   }
 
-  containers = [
+  containers = concat([
     {
-      container_image = local.fleet_image_tag
+      container_name       = "fleet"
+      container_image      = local.fleet_image_tag
+      depends_on_container = local.sidecar_container_names
       ports = {
         name           = "h2c"
         container_port = 8080
@@ -208,7 +217,7 @@ module "fleet-bulk-service" {
       env_vars        = local.fleet_bulk_env_vars
       env_secret_vars = local.fleet_secrets_env_vars
     }
-  ]
+  ], var.sidecar_containers)
 }
 
 # --- Cloud Run Job (Migrations) ---

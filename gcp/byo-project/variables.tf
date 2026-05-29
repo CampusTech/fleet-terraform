@@ -106,6 +106,50 @@ variable "okta_subdomain" {
   default     = null
 }
 
+variable "service_only_env_vars" {
+  description = "Extra env vars applied only to the Cloud Run services (fleet-api, fleet-api-bulk), not the migration job. Use this for vars that depend on sidecar containers (e.g. OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317), which the migration job can't reach since it runs without sidecars."
+  type        = map(string)
+  default     = {}
+}
+
+variable "sidecar_containers" {
+  description = "Optional sidecar containers to run alongside Fleet in both fleet-api and fleet-api-bulk Cloud Run services. Shape matches the cloud-run module's container object. Each container must declare its own startup_probe — Cloud Run enforces this on any container that another container depends_on. Set ports = null (the default) for sidecars that don't expose a Cloud Run ingress port; only one container per service can own the ingress port."
+  type = list(object({
+    container_name       = string
+    container_image      = string
+    container_args       = optional(list(string))
+    container_command    = optional(list(string))
+    depends_on_container = optional(list(string))
+    env_vars             = optional(map(string), {})
+    env_secret_vars = optional(map(object({
+      secret  = string
+      version = string
+    })), {})
+    ports = optional(object({
+      name           = optional(string, "http1")
+      container_port = optional(number, 8080)
+    }))
+    resources = optional(object({
+      limits = optional(object({
+        cpu    = optional(string)
+        memory = optional(string)
+      }))
+      cpu_idle          = optional(bool, true)
+      startup_cpu_boost = optional(bool, false)
+    }), {})
+    startup_probe = optional(object({
+      failure_threshold     = optional(number)
+      initial_delay_seconds = optional(number)
+      timeout_seconds       = optional(number)
+      period_seconds        = optional(number)
+      tcp_socket = optional(object({
+        port = optional(number)
+      }))
+    }))
+  }))
+  default = []
+}
+
 variable "fleet_config" {
   type = object({
     installers_bucket_name = string

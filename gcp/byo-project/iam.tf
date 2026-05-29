@@ -44,3 +44,17 @@ resource "google_secret_manager_secret_iam_member" "fleet_run_sa_secret_access" 
   ]
 }
 
+# Sidecar containers may reference their own secrets (e.g. Datadog API key for
+# the DDOT sidecar). The Cloud Run SA runs every container in the service, so
+# it needs accessor on each sidecar secret too. Iterating the sidecar list and
+# its env_secret_vars map keeps this grant in sync with whatever's wired in.
+resource "google_secret_manager_secret_iam_member" "fleet_run_sa_sidecar_secret_access" {
+  for_each = merge([
+    for c in var.sidecar_containers : c.env_secret_vars
+  ]...)
+
+  project   = var.project_id
+  secret_id = each.value.secret
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.fleet_run_sa.email}"
+}

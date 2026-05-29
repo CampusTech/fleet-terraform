@@ -170,3 +170,9 @@ variable "maxmind_license_key" {
   description = "Maxmind license key used to download GeoLite2-City for the custom Fleet image."
   sensitive   = true
 }
+
+variable "fleet_datadog_api_key" {
+  type        = string
+  description = "Datadog API key for the DDOT collector sidecar running alongside Fleet on Cloud Run. Distinct from the datadog-api-key secret used by the Pub/Sub→Datadog Dataflow jobs (which forward osquery results)."
+  sensitive   = true
+}
