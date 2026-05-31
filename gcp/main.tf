@@ -218,190 +218,21 @@ module "fleet" {
 }
 
 # -------------------------------------
-# Pub/Sub → Datadog Logs (Dataflow)
+# Pub/Sub → Datadog Logs (Dataflow) — REMOVED 2026-05-30 (cost)
 # -------------------------------------
-# One streaming Dataflow job per Fleet log topic, using Google's published
-# Cloud_PubSub_to_Datadog classic template. Each job reads from its own
-# pull subscription and posts to the Datadog Logs intake. Failures go to a
-# per-topic deadletter topic.
+# The 3 streaming Cloud_PubSub_to_Datadog Dataflow jobs were removed because
+# they each pinned ≥1 n1-standard-2 worker (~$50/mo idle, ~$150/mo floor) and
+# the log volume didn't justify it. Removed along with their supporting infra:
+# the dataflow-staging bucket + UDF objects, the dataflow-pubsub-to-datadog
+# worker SA and its IAM, the per-topic deadletter topics, the pull
+# subscriptions, and the datadog-api-key secret.
 #
-# The Datadog API key is fetched from Secret Manager at job runtime; the
-# secret resource is created here but the version must be added out-of-band:
+# The logging_destination_pubsub module (Fleet's log topics) is intentionally
+# kept — Fleet still publishes to those topics, and a consumer can be
+# re-attached later. Cloud Run telemetry (traces/metrics/logs) still flows to
+# Datadog via the DDOT sidecar in datadog.tf.
 #
-#   echo -n "$DD_API_KEY" | gcloud secrets versions add datadog-api-key \
-#     --project=campus-fleet-5c43 --data-file=-
-#
-# The 3 streaming jobs each pin ≥1 n1-standard-2 worker (~$50/mo idle).
-
-locals {
-  # Template only accepts PROTOCOL://HOST[:PORT] — it appends the /api/v2/logs path itself.
-  datadog_logs_url   = "https://http-intake.logs.us5.datadoghq.com"
-  datadog_log_topics = module.logging_destination_pubsub.topic_names
-}
-
-resource "google_secret_manager_secret" "datadog_api_key" {
-  project   = module.project_factory.project_id
-  secret_id = "datadog-api-key"
-  replication {
-    auto {}
-  }
-}
-
-resource "google_storage_bucket_object" "datadog_udf" {
-  for_each = local.datadog_log_topics
-
-  name    = "udf/${each.key}.js"
-  bucket  = google_storage_bucket.dataflow_staging.name
-  content = templatefile("${path.module}/resources/udf.js.tftpl", { log_stream = each.key })
-}
-
-resource "google_storage_bucket" "dataflow_staging" {
-  project                     = module.project_factory.project_id
-  name                        = "${module.project_factory.project_id}-dataflow-staging"
-  location                    = var.region
-  uniform_bucket_level_access = true
-  force_destroy               = true
-
-  lifecycle_rule {
-    condition {
-      age = 7
-    }
-    action {
-      type = "Delete"
-    }
-  }
-}
-
-resource "google_service_account" "dataflow_datadog" {
-  project      = module.project_factory.project_id
-  account_id   = "dataflow-pubsub-to-datadog"
-  display_name = "Dataflow Pub/Sub → Datadog"
-  description  = "Worker SA for the Dataflow jobs forwarding Fleet log topics to Datadog"
-}
-
-resource "google_project_iam_member" "dataflow_datadog_worker" {
-  project = module.project_factory.project_id
-  role    = "roles/dataflow.worker"
-  member  = "serviceAccount:${google_service_account.dataflow_datadog.email}"
-}
-
-# The Dataflow service agent (Google-managed) launches jobs using the worker
-# SA's identity. It needs serviceAccountUser on the worker SA to do that.
-resource "google_service_account_iam_member" "dataflow_service_agent_uses_worker" {
-  service_account_id = google_service_account.dataflow_datadog.name
-  role               = "roles/iam.serviceAccountUser"
-  member             = "serviceAccount:service-${module.project_factory.project_number}@dataflow-service-producer-prod.iam.gserviceaccount.com"
-}
-
-# Required: the Dataflow service agent needs serviceAccountTokenCreator on the
-# worker SA in the v1beta3+ Dataflow runner.
-resource "google_service_account_iam_member" "dataflow_service_agent_token_creator" {
-  service_account_id = google_service_account.dataflow_datadog.name
-  role               = "roles/iam.serviceAccountTokenCreator"
-  member             = "serviceAccount:service-${module.project_factory.project_number}@dataflow-service-producer-prod.iam.gserviceaccount.com"
-}
-
-resource "google_storage_bucket_iam_member" "dataflow_datadog_staging" {
-  bucket = google_storage_bucket.dataflow_staging.name
-  role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${google_service_account.dataflow_datadog.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "dataflow_datadog_secret_access" {
-  project   = google_secret_manager_secret.datadog_api_key.project
-  secret_id = google_secret_manager_secret.datadog_api_key.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.dataflow_datadog.email}"
-}
-
-# Dead-letter topic per source topic for messages Datadog rejects repeatedly.
-resource "google_pubsub_topic" "datadog_deadletter" {
-  for_each = local.datadog_log_topics
-
-  project = module.project_factory.project_id
-  name    = "${each.value}-datadog-deadletter"
-  labels  = var.labels
-}
-
-resource "google_pubsub_topic_iam_member" "datadog_deadletter_publisher" {
-  for_each = google_pubsub_topic.datadog_deadletter
-
-  project = each.value.project
-  topic   = each.value.name
-  role    = "roles/pubsub.publisher"
-  member  = "serviceAccount:${google_service_account.dataflow_datadog.email}"
-}
-
-# Pull subscription per topic — Dataflow consumes from these.
-resource "google_pubsub_subscription" "datadog_input" {
-  for_each = local.datadog_log_topics
-
-  project = module.project_factory.project_id
-  name    = "${each.value}-datadog"
-  topic   = each.value
-  labels  = var.labels
-
-  ack_deadline_seconds       = 60
-  message_retention_duration = "604800s" # 7 days
-
-  expiration_policy {
-    ttl = "" # never expire
-  }
-}
-
-resource "google_pubsub_subscription_iam_member" "datadog_input_subscriber" {
-  for_each = google_pubsub_subscription.datadog_input
-
-  project      = each.value.project
-  subscription = each.value.name
-  role         = "roles/pubsub.subscriber"
-  member       = "serviceAccount:${google_service_account.dataflow_datadog.email}"
-}
-
-resource "google_dataflow_job" "pubsub_to_datadog" {
-  for_each = local.datadog_log_topics
-
-  project           = module.project_factory.project_id
-  region            = var.region
-  name              = "pubsub-to-datadog-${each.key}"
-  template_gcs_path = "gs://dataflow-templates-${var.region}/latest/Cloud_PubSub_to_Datadog"
-  temp_gcs_location = "gs://${google_storage_bucket.dataflow_staging.name}/tmp/${each.key}"
-
-  service_account_email = google_service_account.dataflow_datadog.email
-  on_delete             = "cancel"
-  machine_type          = "n1-standard-2"
-  max_workers           = 3
-
-  # Run workers in the Fleet VPC so they share the existing Cloud NAT path
-  # (workers have no external IPs; egress to Datadog goes through fleet-vpc-nat).
-  network          = module.fleet.vpc_network_name
-  subnetwork       = "regions/${var.region}/subnetworks/${module.fleet.vpc_subnets_names[0]}"
-  ip_configuration = "WORKER_IP_PRIVATE"
-
-  parameters = {
-    inputSubscription                            = google_pubsub_subscription.datadog_input[each.key].id
-    url                                          = local.datadog_logs_url
-    apiKeySource                                 = "SECRET_MANAGER"
-    apiKeySecretId                               = "projects/${module.project_factory.project_id}/secrets/${google_secret_manager_secret.datadog_api_key.secret_id}/versions/latest"
-    outputDeadletterTopic                        = google_pubsub_topic.datadog_deadletter[each.key].id
-    includePubsubMessage                         = "true"
-    batchCount                                   = "100"
-    parallelism                                  = "4"
-    javascriptTextTransformGcsPath               = "gs://${google_storage_bucket.dataflow_staging.name}/${google_storage_bucket_object.datadog_udf[each.key].name}"
-    javascriptTextTransformFunctionName          = "process"
-    javascriptTextTransformReloadIntervalMinutes = "60"
-  }
-
-  labels = var.labels
-
-  depends_on = [
-    google_pubsub_subscription_iam_member.datadog_input_subscriber,
-    google_pubsub_topic_iam_member.datadog_deadletter_publisher,
-    google_secret_manager_secret_iam_member.dataflow_datadog_secret_access,
-    google_storage_bucket_iam_member.dataflow_datadog_staging,
-    google_project_iam_member.dataflow_datadog_worker,
-  ]
-}
+# To restore, see git history for this block (commit before 2026-05-30).
 
 # -------------------------------------
 # GeoLite2 Custom Fleet Image
