@@ -7,11 +7,15 @@ This addon configures AWS Kinesis Firehose to send Fleet's osquery logs to Datad
 3. IAM roles and policies for the Firehose streams to access the S3 bucket
 4. An IAM policy for Fleet to access the Firehose streams
 
+## S3 Bucket Policy: Deny Non-HTTPS
+
+This module automatically attaches a bucket policy to the failure S3 bucket that denies any requests made over plain HTTP. No configuration is required.
+
 ## How to use
 
 ```hcl
 module "datadog-logging" {
-  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-datadog?ref=tf-mod-addon-datadog-logging-v1.1.2"
+  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-datadog?ref=tf-mod-addon-datadog-logging-v1.2.0"
 
   datadog_api_key = "your-datadog-api-key"
 
@@ -82,7 +86,7 @@ Then you can use the module's outputs in your Fleet configuration:
 
 ```hcl
 module "fleet" {
-  source = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.27.0"
+  source = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.30.0"
   certificate_arn = module.acm.acm_certificate_arn
 
   vpc = {
@@ -120,8 +124,8 @@ No requirements.
 ## Providers
 
 | Name | Version |
-|------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.41.0 |
+| ---- | ------- |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | n/a |
 
 ## Modules
 
@@ -130,7 +134,7 @@ No modules.
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_iam_policy.firehose](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_policy.firehose-logging](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_role.firehose](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
@@ -138,8 +142,10 @@ No modules.
 | [aws_kinesis_firehose_delivery_stream.datadog](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kinesis_firehose_delivery_stream) | resource |
 | [aws_s3_bucket.datadog-failure](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket) | resource |
 | [aws_s3_bucket_lifecycle_configuration.datadog-failure](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_lifecycle_configuration) | resource |
+| [aws_s3_bucket_policy.deny_insecure_transport](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_policy) | resource |
 | [aws_s3_bucket_public_access_block.datadog-failure](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_public_access_block) | resource |
 | [aws_s3_bucket_server_side_encryption_configuration.datadog-failure](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_server_side_encryption_configuration) | resource |
+| [aws_iam_policy_document.deny_insecure_transport](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.firehose-logging](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.firehose_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.osquery_firehose_assume_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
@@ -148,17 +154,18 @@ No modules.
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_compression_format"></a> [compression\_format](#input\_compression\_format) | Compression format for the Firehose delivery stream | `string` | `"UNCOMPRESSED"` | no |
 | <a name="input_datadog_api_key"></a> [datadog\_api\_key](#input\_datadog\_api\_key) | Datadog API key for authentication | `string` | n/a | yes |
 | <a name="input_datadog_url"></a> [datadog\_url](#input\_datadog\_url) | Datadog HTTP API endpoint URL | `string` | n/a | yes |
 | <a name="input_log_destinations"></a> [log\_destinations](#input\_log\_destinations) | A map of configurations for Datadog Firehose delivery streams. | <pre>map(object({<br/>    name                  = string<br/>    buffering_size        = number<br/>    buffering_interval    = number<br/>    s3_buffering_size     = number<br/>    s3_buffering_interval = number<br/>    content_encoding      = string<br/>    common_attributes = optional(list(object({<br/>      name  = string<br/>      value = string<br/>    })), [])<br/>  }))</pre> | <pre>{<br/>  "audit": {<br/>    "buffering_interval": 60,<br/>    "buffering_size": 2,<br/>    "common_attributes": [],<br/>    "content_encoding": "NONE",<br/>    "name": "fleet-audit-datadog",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10<br/>  },<br/>  "results": {<br/>    "buffering_interval": 60,<br/>    "buffering_size": 2,<br/>    "common_attributes": [],<br/>    "content_encoding": "NONE",<br/>    "name": "fleet-osquery-results-datadog",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10<br/>  },<br/>  "status": {<br/>    "buffering_interval": 60,<br/>    "buffering_size": 2,<br/>    "common_attributes": [],<br/>    "content_encoding": "NONE",<br/>    "name": "fleet-osquery-status-datadog",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10<br/>  }<br/>}</pre> | no |
 | <a name="input_s3_bucket_config"></a> [s3\_bucket\_config](#input\_s3\_bucket\_config) | Configuration for the S3 bucket used to store failed Datadog delivery attempts | <pre>object({<br/>    name_prefix  = optional(string, "fleet-datadog-failure")<br/>    expires_days = optional(number, 1)<br/>  })</pre> | <pre>{<br/>  "expires_days": 1,<br/>  "name_prefix": "fleet-datadog-failure"<br/>}</pre> | no |
+| <a name="input_s3_bucket_tags"></a> [s3\_bucket\_tags](#input\_s3\_bucket\_tags) | Additional tags to apply to the S3 failure bucket. | `map(string)` | `{}` | no |
 
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_fleet_extra_environment_variables"></a> [fleet\_extra\_environment\_variables](#output\_fleet\_extra\_environment\_variables) | Environment variables to configure Fleet to use Datadog logging via Firehose |
 | <a name="output_fleet_extra_iam_policies"></a> [fleet\_extra\_iam\_policies](#output\_fleet\_extra\_iam\_policies) | IAM policies required for Fleet to log to Datadog via Firehose |
 | <a name="output_fleet_s3_datadog_failure_config"></a> [fleet\_s3\_datadog\_failure\_config](#output\_fleet\_s3\_datadog\_failure\_config) | S3 bucket details - datadog-failure |

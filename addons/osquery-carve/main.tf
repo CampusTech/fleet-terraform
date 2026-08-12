@@ -82,6 +82,7 @@ data "aws_iam_role" "osquery_carve_fleet" {
 
 resource "aws_s3_bucket" "main" { #tfsec:ignore:aws-s3-encryption-customer-key:exp:2028-07-01  #tfsec:ignore:aws-s3-enable-versioning #tfsec:ignore:aws-s3-enable-bucket-logging:exp:2028-07-01
   bucket = var.osquery_carve_s3_bucket.name
+  tags   = var.osquery_carve_s3_bucket.tags
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "main" {
@@ -203,6 +204,33 @@ resource "aws_s3_bucket_public_access_block" "main" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+data "aws_iam_policy_document" "deny_insecure_transport" {
+
+  statement {
+    sid     = "DenyNonHTTPS"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.main.arn,
+      "${aws_s3_bucket.main.arn}/*",
+    ]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "deny_insecure_transport" {
+  bucket = aws_s3_bucket.main.id
+  policy = data.aws_iam_policy_document.deny_insecure_transport.json
 }
 
 data "aws_iam_policy_document" "main" {
