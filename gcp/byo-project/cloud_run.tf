@@ -167,7 +167,11 @@ module "fleet-bulk-service" {
     egress = "ALL_TRAFFIC"
   }
   ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
-  timeout = "300s"
+
+  # Software installers are streamed through this service. A 105MB package on a
+  # slow link takes far longer than the 300s default, which severed the transfer
+  # at exactly 300.000s and surfaced as "Software installer download failed".
+  timeout = "3600s"
 
   service_scaling = {
     min_instance_count = 0
