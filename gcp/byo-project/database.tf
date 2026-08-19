@@ -23,6 +23,7 @@ module "mysql" {
   database_version            = var.database_config.database_version
   tier                        = var.database_config.tier
   database_flags              = var.database_config.database_flags
+  encryption_key_name         = var.database_config.encryption_key_name
   region                      = var.region
   random_instance_name        = true
 
@@ -46,7 +47,7 @@ module "mysql" {
     # We never set authorized networks, we need all connections via the
     # public IP to be mediated by Cloud SQL.
     authorized_networks = []
-    require_ssl         = false
+    ssl_mode            = var.database_config.ssl_mode
     private_network     = module.vpc.network_self_link
   }
 

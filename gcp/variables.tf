@@ -97,6 +97,15 @@ variable "database_config" {
     # "Deletion protection not enabled" recommendation.
     deletion_protection_enabled = optional(bool, true)
     query_insights_enabled      = optional(bool, true)
+    # ENCRYPTED_ONLY makes the instance refuse plaintext connections. The
+    # module has no require_ssl input (v25 dropped it for ssl_mode), so the
+    # old require_ssl = false in database.tf was dead code.
+    ssl_mode = optional(string, "ENCRYPTED_ONLY")
+    # CMEK. Cannot be set on an existing instance -- Cloud SQL: "You can't
+    # enable customer-managed encryption keys on existing instances." Setting
+    # this on a live instance forces replacement. It exists here for the
+    # CMEK migration (clone or replica-then-promote onto a new instance).
+    encryption_key_name = optional(string, null)
     database_flags = optional(list(object({
       name  = string
       value = string
@@ -120,7 +129,7 @@ variable "database_config" {
     collation           = "utf8mb4_unicode_ci"
     charset             = "utf8mb4"
     deletion_protection = true
-    database_version    = "MYSQL_8_0"
+    database_version    = "MYSQL_8_4"
     tier                = "db-custom-2-8192"
   }
 }
@@ -169,7 +178,11 @@ variable "fleet_config" {
     # exactly when it is already struggling.
     mysql_max_open_conns = optional(number, 20)
     mysql_max_idle_conns = optional(number, 20)
-    extra_env_vars       = optional(map(string))
+    # Cloud SQL's server cert does not match the private IP, so "true"
+    # (which verifies hostname) fails. skip-verify encrypts in transit
+    # without server-name verification; traffic never leaves the VPC.
+    mysql_tls_config = optional(string, "skip-verify")
+    extra_env_vars   = optional(map(string))
     extra_secret_env_vars = optional(map(object({
       secret  = string
       version = string

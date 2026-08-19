@@ -25,6 +25,7 @@ locals {
     FLEET_MYSQL_DATABASE                    = var.database_config.database_name
     FLEET_MYSQL_MAX_OPEN_CONNS              = tostring(var.fleet_config.mysql_max_open_conns)
     FLEET_MYSQL_MAX_IDLE_CONNS              = tostring(var.fleet_config.mysql_max_idle_conns)
+    FLEET_MYSQL_TLS_CONFIG                  = var.fleet_config.mysql_tls_config
     FLEET_REDIS_ADDRESS                     = "${module.memstore.host}:${module.memstore.port}"
     FLEET_REDIS_USE_TLS                     = "false"
     FLEET_UPGRADES_ALLOW_MISSING_MIGRATIONS = "1"
