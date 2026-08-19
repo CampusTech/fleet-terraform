@@ -55,15 +55,52 @@ variable "database_config" {
     # deletion_protection above.
     deletion_protection_enabled = optional(bool, true)
     query_insights_enabled      = optional(bool, true)
-    # ENCRYPTED_ONLY makes the instance refuse plaintext connections. The
-    # module has no require_ssl input (v25 dropped it for ssl_mode), so the
-    # old require_ssl = false in database.tf was dead code.
+    # ENCRYPTED_ONLY is Google's documented encrypted-only setting, and
+    # sslMode has priority over the deprecated requireSsl field (which stays
+    # false -- ENCRYPTED_ONLY + requireSsl=false is the canonical pair; only
+    # TRUSTED_CLIENT_CERTIFICATE_REQUIRED pairs with requireSsl=true, and that
+    # needs client certs Fleet does not have).
+    #
+    # Verified 2026-08-19: Fleet connects with TLS (real cipher on a live
+    # session) but the server still reports require_secure_transport=OFF, and a
+    # forced-plaintext client reached authentication rather than being refused
+    # at connect time. So this encrypts Fleet's traffic; it is not proven to
+    # refuse plaintext. Hard enforcement needs client certs, or a support case
+    # on the ENCRYPTED_ONLY / require_secure_transport discrepancy.
+    #
+    # The module has no require_ssl input (v25 dropped it for ssl_mode) and the
+    # google provider removed the attribute entirely, so the old
+    # require_ssl = false in database.tf was dead code and unfixable there.
     ssl_mode = optional(string, "ENCRYPTED_ONLY")
     # CMEK. Cannot be set on an existing instance -- Cloud SQL: "You can't
     # enable customer-managed encryption keys on existing instances." Setting
     # this on a live instance forces replacement. It exists here for the
     # CMEK migration (clone or replica-then-promote onto a new instance).
     encryption_key_name = optional(string, null)
+    # Instance-level password validation policy (Cloud SQL recommendation
+    # "No password policy").
+    #
+    # min_length is pinned to 28 on purpose. The sql-db module derives the
+    # generated password from this block:
+    #   length  = min_length != null ? min_length + 4 : 32
+    #   special = complexity == "COMPLEXITY_DEFAULT"
+    # The live password is length 32 / special false, so 28 + 4 = 32 with
+    # complexity left unset keeps random_password byte-identical and avoids
+    # rotating the credential Fleet is currently using. Setting complexity =
+    # COMPLEXITY_DEFAULT would regenerate it and break Fleet until every Cloud
+    # Run instance restarted -- do that deliberately, with a rollout, not here.
+    password_validation_policy_config = optional(object({
+      enable_password_policy      = bool
+      min_length                  = optional(number)
+      complexity                  = optional(string)
+      disallow_username_substring = optional(bool)
+      reuse_interval              = optional(number)
+      }), {
+      enable_password_policy      = true
+      min_length                  = 28
+      disallow_username_substring = true
+      reuse_interval              = 5
+    })
     database_flags = optional(list(object({
       name  = string
       value = string
