@@ -92,6 +92,38 @@ variable "database_config" {
     deletion_protection = bool
     database_version    = string
     tier                = string
+    # API/console-level delete guard, distinct from the Terraform-level
+    # deletion_protection above. Both are needed to satisfy the Cloud SQL
+    # "Deletion protection not enabled" recommendation.
+    deletion_protection_enabled = optional(bool, true)
+    query_insights_enabled      = optional(bool, true)
+    # ENCRYPTED_ONLY makes the instance refuse plaintext connections. The
+    # module has no require_ssl input (v25 dropped it for ssl_mode), so the
+    # old require_ssl = false in database.tf was dead code.
+    ssl_mode = optional(string, "ENCRYPTED_ONLY")
+    # CMEK. Cannot be set on an existing instance -- Cloud SQL: "You can't
+    # enable customer-managed encryption keys on existing instances." Setting
+    # this on a live instance forces replacement. It exists here for the
+    # CMEK migration (clone or replica-then-promote onto a new instance).
+    encryption_key_name = optional(string, null)
+    database_flags = optional(list(object({
+      name  = string
+      value = string
+      })), [
+      # Cloud SQL "Exposed to local data loads": Fleet never issues
+      # LOAD DATA LOCAL INFILE.
+      { name = "local_infile", value = "off" },
+      # Cloud SQL "Database names exposed": the Fleet user only needs its
+      # own schema.
+      { name = "skip_show_database", value = "on" },
+      # Slow query log so the next pathological query is diagnosable from
+      # Cloud Logging instead of a one-off container.
+      { name = "slow_query_log", value = "on" },
+      # Cloud SQL needs log_output=FILE for slow-query entries to reach Logs
+      # Explorer; verified permitted (FILE,TABLE,NONE) on 8.0 and 8.4.
+      { name = "log_output", value = "FILE" },
+      { name = "long_query_time", value = "2" },
+    ])
   })
   default = {
     name                = "fleet-mysql"
@@ -99,9 +131,9 @@ variable "database_config" {
     database_user       = "fleet"
     collation           = "utf8mb4_unicode_ci"
     charset             = "utf8mb4"
-    deletion_protection = false
-    database_version    = "MYSQL_8_0"
-    tier                = "db-n1-standard-1"
+    deletion_protection = true
+    database_version    = "MYSQL_8_4"
+    tier                = "db-custom-2-8192"
   }
 }
 
@@ -143,7 +175,17 @@ variable "fleet_config" {
     max_instance_count     = number
     exec_migration         = bool
     use_h2c                = bool
-    extra_env_vars         = optional(map(string))
+    # Per-instance MySQL pool caps. Cloud Run can scale to
+    # max_instance_count, and Fleet's default pool is 50 per instance, so
+    # the default multiplies into a connection stampede against Cloud SQL
+    # exactly when it is already struggling.
+    mysql_max_open_conns = optional(number, 20)
+    mysql_max_idle_conns = optional(number, 20)
+    # Cloud SQL's server cert does not match the private IP, so "true"
+    # (which verifies hostname) fails. skip-verify encrypts in transit
+    # without server-name verification; traffic never leaves the VPC.
+    mysql_tls_config = optional(string, "skip-verify")
+    extra_env_vars   = optional(map(string))
     extra_secret_env_vars = optional(map(object({
       secret  = string
       version = string
