@@ -119,6 +119,9 @@ variable "database_config" {
       # Slow query log so the next pathological query is diagnosable from
       # Cloud Logging instead of a one-off container.
       { name = "slow_query_log", value = "on" },
+      # Cloud SQL needs log_output=FILE for slow-query entries to reach Logs
+      # Explorer; verified permitted (FILE,TABLE,NONE) on 8.0 and 8.4.
+      { name = "log_output", value = "FILE" },
       { name = "long_query_time", value = "2" },
     ])
   })
