@@ -40,6 +40,12 @@ locals {
     FLEET_S3_SOFTWARE_INSTALLERS_ENDPOINT_URL        = "https://storage.googleapis.com"
     FLEET_S3_SOFTWARE_INSTALLERS_FORCE_S3_PATH_STYLE = "true"
     FLEET_S3_SOFTWARE_INSTALLERS_REGION              = var.region
+    # Hand clients a presigned GCS URL instead of streaming installer /
+    # in-house app / bootstrap package bytes through Fleet. The GCLB in front
+    # of Cloud Run severs any response stream at 100s, which failed every
+    # installer larger than ~100MB (the Okta Verify pkg). Presigning needs the
+    # https storage.googleapis.com endpoint + HMAC creds set above.
+    FLEET_S3_SOFTWARE_INSTALLERS_SIGNED_URL = "true"
     # File carves. Reuses the same HMAC key — one key per service account
     # covers every GCS bucket in the project.
     FLEET_S3_CARVES_BUCKET              = google_storage_bucket.carves.id
