@@ -351,41 +351,44 @@ locals {
         entrypoint = "bash"
         args = [
           "-c",
-          # NOTE on expansion layers (three nested, easy to get wrong):
-          #  - Cloud Build scans the whole build config for substitutions and
-          #    treats BOTH ${FOO} and $FOO as substitution refs, rejecting any
-          #    that is not declared. A literal $ for the step must be written as
-          #    $$ in the payload (CB unescapes $$ -> $). The old build used
-          #    $${FLEET_IMAGE}/$${LICENSE_KEY}, which TF rendered to bare
-          #    ${FLEET_IMAGE}/${LICENSE_KEY} -> 400. So every $ meant for the
-          #    step's shell/docker is $$ here, and TF leaves $$ untouched (TF
-          #    only escapes ${ and %{).
-          #  - FLEET_IMAGE is gone entirely: TF renders the real image into the
-          #    FROM line, so no ARG/substitution is needed.
-          #  - LICENSE_KEY reaches the step as a secretEnv env var (not a file;
-          #    the old $(cat /workspace/license_key) read a path nothing wrote).
-          #    Payload $$LICENSE_KEY -> step sees $LICENSE_KEY: inside the quoted
-          #    <<'DOCKERFILE' heredoc it stays literal and docker expands it via
-          #    ARG; on the docker build line the step's bash expands it.
+          # SECURITY: the license key must never reach `docker build` as an ARG —
+          # ARG values are baked into the image's layer history (`docker history`
+          # shows them), exposing the key to anyone with read on the registry.
+          # The key is written to a file and passed as a BuildKit secret mount,
+          # which is available only during the single RUN and never persists in
+          # any layer, the history, or the build context. wget lives in the fleet
+          # base image, so the download stays inside that RUN.
+          #
+          # NOTE on expansion layers: Cloud Build scans the whole config for
+          # substitutions and treats BOTH ${FOO} and $FOO as refs, rejecting
+          # undeclared ones. A literal $ for the step is written $$ (CB unescapes
+          # $$ -> $). TF leaves $$ untouched (it only escapes ${ and %{), and the
+          # image in FROM is rendered to a literal by TF. Do NOT reintroduce
+          # $${...} — it renders to a bare ${...} and 400s the build.
           <<-EOT
+            set -e
+            printf '%s' "$$LICENSE_KEY" > /workspace/license_key
             cat > Dockerfile <<'DOCKERFILE'
+            # syntax=docker/dockerfile:1.4
             FROM ${local.fleet_upstream_image}
-            ARG LICENSE_KEY
             USER root
-            RUN mkdir -p /opt/GeoLite2 && cd /opt/GeoLite2 && \
-                wget "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=$$LICENSE_KEY&suffix=tar.gz" -O GeoLite2-City.tar.gz && \
-                wget "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=$$LICENSE_KEY&suffix=tar.gz.sha256" -O GeoLite2-City.tar.gz.sha256 && \
+            RUN --mount=type=secret,id=license_key \
+                LK="$$(cat /run/secrets/license_key)" && \
+                mkdir -p /opt/GeoLite2 && cd /tmp && \
+                wget "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=$$LK&suffix=tar.gz" -O GeoLite2-City.tar.gz && \
+                wget "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=$$LK&suffix=tar.gz.sha256" -O GeoLite2-City.tar.gz.sha256 && \
                 [ "$$(awk '{ print $$1 }' GeoLite2-City.tar.gz.sha256)" = "$$(sha256sum GeoLite2-City.tar.gz | awk '{ print $$1 }')" ] && \
-                (tar -xzvf GeoLite2-City.tar.gz "*/GeoLite2-City.mmdb" --strip-components 1 2>/dev/null || true) && \
+                tar -xzf GeoLite2-City.tar.gz -C /opt/GeoLite2 --strip-components 1 && \
                 rm -f GeoLite2-City.tar.gz*
             USER fleet
             CMD ["fleet", "serve"]
             DOCKERFILE
-            docker build \
-              --build-arg LICENSE_KEY="$$LICENSE_KEY" \
+            DOCKER_BUILDKIT=1 docker build \
+              --secret id=license_key,src=/workspace/license_key \
               -t ${local.fleet_geolite2_image} \
               -t ${replace(local.fleet_geolite2_image, "/:[^:]+$/", ":latest")} \
               .
+            rm -f /workspace/license_key
             docker push ${local.fleet_geolite2_image}
             docker push ${replace(local.fleet_geolite2_image, "/:[^:]+$/", ":latest")}
           EOT
