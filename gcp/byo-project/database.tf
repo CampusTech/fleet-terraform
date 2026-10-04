@@ -16,16 +16,17 @@ module "mysql" {
   source  = "terraform-google-modules/sql-db/google//modules/mysql"
   version = "~> 25.0"
 
-  name                        = var.database_config.name
-  project_id                  = var.project_id
-  deletion_protection         = var.database_config.deletion_protection
-  deletion_protection_enabled = var.database_config.deletion_protection_enabled
-  database_version            = var.database_config.database_version
-  tier                        = var.database_config.tier
-  database_flags              = var.database_config.database_flags
-  encryption_key_name         = var.database_config.encryption_key_name
-  region                      = var.region
-  random_instance_name        = true
+  name                              = var.database_config.name
+  project_id                        = var.project_id
+  deletion_protection               = var.database_config.deletion_protection
+  deletion_protection_enabled       = var.database_config.deletion_protection_enabled
+  database_version                  = var.database_config.database_version
+  tier                              = var.database_config.tier
+  database_flags                    = var.database_config.database_flags
+  encryption_key_name               = var.database_config.encryption_key_name
+  password_validation_policy_config = var.database_config.password_validation_policy_config
+  region                            = var.region
+  random_instance_name              = true
 
   # Query Insights: without it, diagnosing a saturated instance means
   # shelling into a throwaway container to read performance_schema.
