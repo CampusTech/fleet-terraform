@@ -165,6 +165,7 @@ All CloudWatch alarm thresholds, periods, and evaluation periods can be overridd
 | Field | Alarm | Default threshold | Default period | Default evaluation periods |
 |---|---|---|---|---|
 | `rds_cpu` | RDS CPU Utilization | 80 | 300s | 1 |
+| `rds_aas` | RDS database load per vCPU (AAS / vCPU ratio) | 1 (ratio) | 300s | 1 |
 | `redis_cpu` | Redis CPU Utilization | 70 | 300s | 1 |
 | `redis_cpu_engine` | Redis Engine CPU Utilization | 25 | 300s | 1 |
 | `redis_memory` | Redis Database Memory % | 80 | 300s | 1 |
@@ -235,6 +236,7 @@ Valid targets for `sns_topic_arns_map`:
  - cron\_job\_failure\_monitoring (notifications about errors in individual cron jobs - defaults to value of `cron_monitoring`)
  - elb\_5xx\_error\_rate (percentage of requests receiving ELB-generated 5XX responses)
  - log\_monitoring
+ - rds\_aas\_too\_high (database load per vCPU, `DBLoadRelativeToNumVCPUs`)
  - rds\_cpu\_utilization\_too\_high
  - rds\_db\_event\_subscription
  - redis\_cpu\_engine\_utilization
@@ -305,6 +307,7 @@ No modules.
 | [aws_cloudwatch_metric_alarm.elb_5xx_error_rate](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.lb](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.log_monitoring](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
+| [aws_cloudwatch_metric_alarm.rds_aas_too_high](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.redis-current-connections](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.redis-database-memory-percentage](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.redis-replication-lag](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
