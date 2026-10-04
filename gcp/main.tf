@@ -357,7 +357,9 @@ locals {
           # The key is written to a file and passed as a BuildKit secret mount,
           # which is available only during the single RUN and never persists in
           # any layer, the history, or the build context. wget lives in the fleet
-          # base image, so the download stays inside that RUN.
+          # base image, so the download stays inside that RUN, and runs -q so the
+          # key-bearing URL is never echoed to the build log regardless of the
+          # image's wget variant.
           #
           # NOTE on expansion layers: Cloud Build scans the whole config for
           # substitutions and treats BOTH ${FOO} and $FOO as refs, rejecting
@@ -375,8 +377,8 @@ locals {
             RUN --mount=type=secret,id=license_key \
                 LK="$$(cat /run/secrets/license_key)" && \
                 mkdir -p /opt/GeoLite2 && cd /tmp && \
-                wget "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=$$LK&suffix=tar.gz" -O GeoLite2-City.tar.gz && \
-                wget "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=$$LK&suffix=tar.gz.sha256" -O GeoLite2-City.tar.gz.sha256 && \
+                wget "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=$$LK&suffix=tar.gz" -q -O GeoLite2-City.tar.gz && \
+                wget "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=$$LK&suffix=tar.gz.sha256" -q -O GeoLite2-City.tar.gz.sha256 && \
                 [ "$$(awk '{ print $$1 }' GeoLite2-City.tar.gz.sha256)" = "$$(sha256sum GeoLite2-City.tar.gz | awk '{ print $$1 }')" ] && \
                 tar -xzf GeoLite2-City.tar.gz -C /opt/GeoLite2 --strip-components 1 && \
                 rm -f GeoLite2-City.tar.gz*
