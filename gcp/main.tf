@@ -321,10 +321,14 @@ resource "google_project_iam_member" "geolite2_refresh_run_builds" {
   member  = "serviceAccount:${google_service_account.geolite2_refresh.email}"
 }
 
-resource "google_project_iam_member" "geolite2_refresh_service_account_user" {
-  project = module.project_factory.project_id
-  role    = "roles/iam.serviceAccountUser"
-  member  = "serviceAccount:${google_service_account.geolite2_refresh.email}"
+# actAs is needed only for the Cloud Build default SA the monthly build runs
+# as, so scope it to that one SA rather than granting serviceAccountUser
+# project-wide (which would let the scheduler SA impersonate every SA in the
+# project, including Fleet's runtime SA).
+resource "google_service_account_iam_member" "geolite2_refresh_act_as_cloudbuild" {
+  service_account_id = "projects/${module.project_factory.project_id}/serviceAccounts/${module.project_factory.project_number}@cloudbuild.gserviceaccount.com"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.geolite2_refresh.email}"
 }
 
 # Build config that Cloud Scheduler submits each month. Fetches the
@@ -401,7 +405,7 @@ resource "google_cloud_scheduler_job" "geolite2_refresh" {
 
   depends_on = [
     google_project_iam_member.geolite2_refresh_run_builds,
-    google_project_iam_member.geolite2_refresh_service_account_user,
+    google_service_account_iam_member.geolite2_refresh_act_as_cloudbuild,
     google_secret_manager_secret_iam_member.geolite2_refresh_secret_access,
     google_artifact_registry_repository_iam_member.cloudbuild_writer,
   ]
