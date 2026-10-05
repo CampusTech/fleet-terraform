@@ -300,11 +300,14 @@ resource "google_service_account" "geolite2_refresh" {
   description  = "Service account Cloud Scheduler uses to trigger monthly GeoLite2 image rebuilds"
 }
 
+# The monthly build runs AS geolite2-refresh (set via serviceAccount in the
+# build payload), so that SA — not the Cloud Build service agent or the legacy
+# default build SA — needs to read the license secret and push the image.
 resource "google_secret_manager_secret_iam_member" "geolite2_refresh_secret_access" {
   project   = google_secret_manager_secret.maxmind_license_key.project
   secret_id = google_secret_manager_secret.maxmind_license_key.secret_id
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:service-${module.project_factory.project_number}@gcp-sa-cloudbuild.iam.gserviceaccount.com"
+  member    = "serviceAccount:${google_service_account.geolite2_refresh.email}"
 }
 
 resource "google_artifact_registry_repository_iam_member" "cloudbuild_writer" {
@@ -312,7 +315,7 @@ resource "google_artifact_registry_repository_iam_member" "cloudbuild_writer" {
   location   = google_artifact_registry_repository.fleet.location
   repository = google_artifact_registry_repository.fleet.name
   role       = "roles/artifactregistry.writer"
-  member     = "serviceAccount:${module.project_factory.project_number}@cloudbuild.gserviceaccount.com"
+  member     = "serviceAccount:${google_service_account.geolite2_refresh.email}"
 }
 
 resource "google_project_iam_member" "geolite2_refresh_run_builds" {
@@ -321,15 +324,22 @@ resource "google_project_iam_member" "geolite2_refresh_run_builds" {
   member  = "serviceAccount:${google_service_account.geolite2_refresh.email}"
 }
 
-# No serviceAccountUser grant: the monthly build payload specifies no
-# serviceAccount, so the scheduler SA never needs actAs on anything. The
-# previous project-wide roles/iam.serviceAccountUser binding let it
-# impersonate every SA in the project (including Fleet's runtime SA) and was
-# removed as over-permission. NOTE: the scheduler build itself is separately
-# broken — it submits to the global Cloud Build API with no user-managed SA
-# and the legacy default build SA does not exist in this project, so the job
-# 400s (INVALID_ARGUMENT). Fixing that needs a dedicated build SA, tracked
-# apart from this security change.
+# CLOUD_LOGGING_ONLY requires the build SA to write its own logs.
+resource "google_project_iam_member" "geolite2_refresh_log_writer" {
+  project = module.project_factory.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.geolite2_refresh.email}"
+}
+
+# The scheduler submits the build with serviceAccount=geolite2-refresh using
+# geolite2-refresh's own oauth token, so it needs actAs on itself. Scoped to
+# this one SA — NOT the project-wide serviceAccountUser that was removed as
+# over-permission (it let the SA impersonate every SA in the project).
+resource "google_service_account_iam_member" "geolite2_refresh_act_as_self" {
+  service_account_id = google_service_account.geolite2_refresh.id
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.geolite2_refresh.email}"
+}
 
 # Build config that Cloud Scheduler submits each month. Fetches the
 # Dockerfile inline so we don't need a source repo for it.
@@ -341,27 +351,46 @@ locals {
         entrypoint = "bash"
         args = [
           "-c",
+          # SECURITY: the license key must never reach `docker build` as an ARG —
+          # ARG values are baked into the image's layer history (`docker history`
+          # shows them), exposing the key to anyone with read on the registry.
+          # The key is written to a file and passed as a BuildKit secret mount,
+          # which is available only during the single RUN and never persists in
+          # any layer, the history, or the build context. wget lives in the fleet
+          # base image, so the download stays inside that RUN, and runs -q so the
+          # key-bearing URL is never echoed to the build log regardless of the
+          # image's wget variant.
+          #
+          # NOTE on expansion layers: Cloud Build scans the whole config for
+          # substitutions and treats BOTH ${FOO} and $FOO as refs, rejecting
+          # undeclared ones. A literal $ for the step is written $$ (CB unescapes
+          # $$ -> $). TF leaves $$ untouched (it only escapes ${ and %{), and the
+          # image in FROM is rendered to a literal by TF. Do NOT reintroduce
+          # $${...} — it renders to a bare ${...} and 400s the build.
           <<-EOT
+            set -e
+            printf '%s' "$$LICENSE_KEY" > /workspace/license_key
             cat > Dockerfile <<'DOCKERFILE'
-            ARG FLEET_IMAGE
-            FROM $${FLEET_IMAGE}
-            ARG LICENSE_KEY
+            # syntax=docker/dockerfile:1.4
+            FROM ${local.fleet_upstream_image}
             USER root
-            RUN mkdir -p /opt/GeoLite2 && cd /opt/GeoLite2 && \
-                wget "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=$${LICENSE_KEY}&suffix=tar.gz" -O GeoLite2-City.tar.gz && \
-                wget "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=$${LICENSE_KEY}&suffix=tar.gz.sha256" -O GeoLite2-City.tar.gz.sha256 && \
+            RUN --mount=type=secret,id=license_key \
+                LK="$$(cat /run/secrets/license_key)" && \
+                mkdir -p /opt/GeoLite2 && cd /tmp && \
+                wget "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=$$LK&suffix=tar.gz" -q -O GeoLite2-City.tar.gz && \
+                wget "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=$$LK&suffix=tar.gz.sha256" -q -O GeoLite2-City.tar.gz.sha256 && \
                 [ "$$(awk '{ print $$1 }' GeoLite2-City.tar.gz.sha256)" = "$$(sha256sum GeoLite2-City.tar.gz | awk '{ print $$1 }')" ] && \
-                (tar -xzvf GeoLite2-City.tar.gz "*/GeoLite2-City.mmdb" --strip-components 1 2>/dev/null || true) && \
+                tar -xzf GeoLite2-City.tar.gz -C /opt/GeoLite2 --strip-components 1 && \
                 rm -f GeoLite2-City.tar.gz*
             USER fleet
             CMD ["fleet", "serve"]
             DOCKERFILE
-            docker build \
-              --build-arg FLEET_IMAGE=${local.fleet_upstream_image} \
-              --build-arg LICENSE_KEY="$$(cat /workspace/license_key)" \
+            DOCKER_BUILDKIT=1 docker build \
+              --secret id=license_key,src=/workspace/license_key \
               -t ${local.fleet_geolite2_image} \
               -t ${replace(local.fleet_geolite2_image, "/:[^:]+$/", ":latest")} \
               .
+            rm -f /workspace/license_key
             docker push ${local.fleet_geolite2_image}
             docker push ${replace(local.fleet_geolite2_image, "/:[^:]+$/", ":latest")}
           EOT
@@ -377,6 +406,12 @@ locals {
         }
       ]
     }
+    # This project has no legacy default Cloud Build SA, so a build with no
+    # serviceAccount fails "Unknown service account". Run the build as the
+    # geolite2-refresh SA itself (it is also the scheduler's oauth identity).
+    # A user-specified serviceAccount requires non-default logging, which is
+    # already CLOUD_LOGGING_ONLY below.
+    serviceAccount = google_service_account.geolite2_refresh.id
     options = {
       logging = "CLOUD_LOGGING_ONLY"
     }
@@ -405,6 +440,8 @@ resource "google_cloud_scheduler_job" "geolite2_refresh" {
 
   depends_on = [
     google_project_iam_member.geolite2_refresh_run_builds,
+    google_project_iam_member.geolite2_refresh_log_writer,
+    google_service_account_iam_member.geolite2_refresh_act_as_self,
     google_secret_manager_secret_iam_member.geolite2_refresh_secret_access,
     google_artifact_registry_repository_iam_member.cloudbuild_writer,
   ]
