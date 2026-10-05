@@ -183,7 +183,7 @@ module "fleet-bulk-service" {
   timeout = "3600s"
 
   service_scaling = {
-    min_instance_count = 0
+    min_instance_count = var.fleet_config.bulk_min_instance_count
   }
 
   template_scaling = {

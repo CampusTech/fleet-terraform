@@ -172,9 +172,14 @@ variable "fleet_config" {
     debug_logging          = bool
     license_key            = optional(string)
     min_instance_count     = number
-    max_instance_count     = number
-    exec_migration         = bool
-    use_h2c                = bool
+    # fleet-api-bulk serves /software/titles/* (the load balancer can only
+    # wildcard-match terminally), so title-detail GETs land on it. Its cold
+    # start is ~50s (datadog-agent sidecar, then fleet), longer than typical
+    # API client timeouts; keep one instance warm.
+    bulk_min_instance_count = optional(number, 1)
+    max_instance_count      = number
+    exec_migration          = bool
+    use_h2c                 = bool
     # Per-instance MySQL pool caps. Cloud Run can scale to
     # max_instance_count, and Fleet's default pool is 50 per instance, so
     # the default multiplies into a connection stampede against Cloud SQL
