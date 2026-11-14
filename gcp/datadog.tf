@@ -27,7 +27,7 @@
 #     break the geolite2 + tag-bump upgrade path.
 
 resource "google_secret_manager_secret" "fleet_datadog_api_key" {
-  project   = module.project_factory.project_id
+  project   = local.effective_project_id
   secret_id = "fleet-datadog-api-key"
   replication {
     auto {}
