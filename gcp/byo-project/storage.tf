@@ -55,7 +55,10 @@ resource "google_storage_bucket_iam_member" "hmac_sa_storage_admin" {
 # S3-compatible client pointed at GCS. Software title icons and MDM
 # bootstrap packages reuse the software_installers bucket above under
 # hard-coded sub-prefixes, so no separate buckets are needed for those.
+# Optional: an empty carves_bucket_name disables carves storage entirely.
 resource "google_storage_bucket" "carves" {
+  count = local.carves_enabled ? 1 : 0
+
   project       = var.project_id
   name          = nonsensitive(var.fleet_config.carves_bucket_name)
   location      = var.location
@@ -76,7 +79,12 @@ resource "google_storage_bucket" "carves" {
 }
 
 resource "google_storage_bucket_iam_member" "hmac_sa_carves_admin" {
-  bucket = google_storage_bucket.carves.name
+  count  = local.carves_enabled ? 1 : 0
+  bucket = google_storage_bucket.carves[0].name
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.fleet_run_sa.email}"
+}
+
+locals {
+  carves_enabled = nonsensitive(var.fleet_config.carves_bucket_name) != ""
 }

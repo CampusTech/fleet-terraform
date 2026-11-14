@@ -18,13 +18,23 @@ locals {
     FLEET_S3_SOFTWARE_INSTALLERS_SECRET_ACCESS_KEY = {
       secret  = google_secret_manager_secret.hmac_secret.secret_id
       version = "latest"
-    },
+    }
+    }, local.carves_enabled ? {
     FLEET_S3_CARVES_SECRET_ACCESS_KEY = {
       secret  = google_secret_manager_secret.hmac_secret.secret_id
       version = "latest"
     }
-  })
-  fleet_env_vars = merge(var.fleet_config.extra_env_vars, {
+  } : {})
+  fleet_carves_env_vars = local.carves_enabled ? {
+    # File carves. Reuses the same HMAC key — one key per service account
+    # covers every GCS bucket in the project.
+    FLEET_S3_CARVES_BUCKET              = google_storage_bucket.carves[0].id
+    FLEET_S3_CARVES_ACCESS_KEY_ID       = google_storage_hmac_key.key.access_id
+    FLEET_S3_CARVES_ENDPOINT_URL        = "https://storage.googleapis.com"
+    FLEET_S3_CARVES_FORCE_S3_PATH_STYLE = "true"
+    FLEET_S3_CARVES_REGION              = var.region
+  } : {}
+  fleet_env_vars = merge(var.fleet_config.extra_env_vars, local.fleet_carves_env_vars, {
     FLEET_LICENSE_KEY                       = var.fleet_config.license_key
     FLEET_SERVER_FORCE_H2C                  = var.fleet_config.use_h2c
     FLEET_MYSQL_PROTOCOL                    = "tcp"
@@ -53,13 +63,6 @@ locals {
     # installer larger than ~100MB (the Okta Verify pkg). Presigning needs the
     # https storage.googleapis.com endpoint + HMAC creds set above.
     FLEET_S3_SOFTWARE_INSTALLERS_SIGNED_URL = "true"
-    # File carves. Reuses the same HMAC key — one key per service account
-    # covers every GCS bucket in the project.
-    FLEET_S3_CARVES_BUCKET              = google_storage_bucket.carves.id
-    FLEET_S3_CARVES_ACCESS_KEY_ID       = google_storage_hmac_key.key.access_id
-    FLEET_S3_CARVES_ENDPOINT_URL        = "https://storage.googleapis.com"
-    FLEET_S3_CARVES_FORCE_S3_PATH_STYLE = "true"
-    FLEET_S3_CARVES_REGION              = var.region
     # Allow user-authored DDM declarations of type
     # com.apple.configuration.softwareupdate.enforcement.specific so we can
     # pin iPad Zoom Rooms to a specific iPadOS target version with a hard
