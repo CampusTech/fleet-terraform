@@ -34,7 +34,29 @@ override_module {
 }
 
 override_module {
-  target = module.fleet
+  target  = module.fleet
+  outputs = { fleet_service_account_email = "fleet-run-sa@fleet-test.iam.gserviceaccount.com" }
+}
+
+// Fork-only root additions: Okta mTLS addon (reads an untracked CA PEM) and
+// the GeoLite2 image build (docker provider) are stubbed out.
+mock_provider "docker" {}
+mock_provider "local" {}
+
+override_module {
+  target = module.okta_conditional_access
+  outputs = {
+    server_tls_policy  = "projects/fleet-test/locations/global/serverTlsPolicies/fleet-mtls"
+    client_cert_header = "X-Client-Cert-Serial: {client_cert_serial_number}"
+  }
+}
+
+override_module {
+  target = module.geolite2
+  outputs = {
+    image_digest                = "us-central1-docker.pkg.dev/fleet-test/fleet/fleet-geolite2@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    extra_environment_variables = {}
+  }
 }
 
 variables {

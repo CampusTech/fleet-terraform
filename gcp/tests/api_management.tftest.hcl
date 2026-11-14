@@ -27,6 +27,27 @@ mock_provider "null" {}
 mock_provider "time" {}
 mock_provider "terracurl" {}
 
+// Fork-only root additions: Okta mTLS addon (reads an untracked CA PEM) and
+// the GeoLite2 image build (docker provider) are stubbed out.
+mock_provider "docker" {}
+mock_provider "local" {}
+
+override_module {
+  target = module.okta_conditional_access
+  outputs = {
+    server_tls_policy  = "projects/fleet-test/locations/global/serverTlsPolicies/fleet-mtls"
+    client_cert_header = "X-Client-Cert-Serial: {client_cert_serial_number}"
+  }
+}
+
+override_module {
+  target = module.geolite2
+  outputs = {
+    image_digest                = "us-central1-docker.pkg.dev/fleet-test/fleet/fleet-geolite2@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    extra_environment_variables = {}
+  }
+}
+
 variables {
   dns_zone_name   = "example.com."
   dns_record_name = "fleet.example.com."
@@ -72,7 +93,8 @@ run "existing_project_default_manages_no_apis" {
   command = plan
 
   override_module {
-    target = module.fleet
+    target  = module.fleet
+    outputs = { fleet_service_account_email = "fleet-run-sa@fleet-test.iam.gserviceaccount.com" }
   }
 
   variables {
@@ -102,7 +124,8 @@ run "existing_project_opt_in_manages_baseline_and_extras" {
   command = plan
 
   override_module {
-    target = module.fleet
+    target  = module.fleet
+    outputs = { fleet_service_account_email = "fleet-run-sa@fleet-test.iam.gserviceaccount.com" }
   }
 
   variables {
@@ -161,7 +184,8 @@ run "new_project_ignores_opt_in_flag" {
   command = plan
 
   override_module {
-    target = module.fleet
+    target  = module.fleet
+    outputs = { fleet_service_account_email = "fleet-run-sa@fleet-test.iam.gserviceaccount.com" }
   }
 
   variables {
@@ -184,7 +208,15 @@ run "new_project_ignores_opt_in_flag" {
   assert {
     condition = (
       toset(module.project_factory[0].enabled_apis) ==
-      toset(concat(var.expected_baseline_apis, ["cloudkms.googleapis.com"]))
+      toset(concat(var.expected_baseline_apis, ["cloudkms.googleapis.com"], [
+        # Fork-only APIs appended in main.tf (Okta mTLS, Pub/Sub, GeoLite2 build).
+        "networksecurity.googleapis.com",
+        "dataflow.googleapis.com",
+        "pubsub.googleapis.com",
+        "artifactregistry.googleapis.com",
+        "cloudbuild.googleapis.com",
+        "cloudscheduler.googleapis.com",
+      ]))
     )
     error_message = "project_factory enabled APIs must remain the baseline plus extra_apis."
   }
