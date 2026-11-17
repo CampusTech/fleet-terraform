@@ -1,5 +1,12 @@
 terraform {
-  required_version = "~> 1.11"
+  required_version = "~> 1.12"
+
+  # Configure your own remote state backend before apply.
+  # backend "gcs" {
+  #   bucket = "your-fleet-terraform-state"
+  #   prefix = "prod/fleet-gcp"
+  # }
+
   required_providers {
     google = {
       source  = "hashicorp/google"
@@ -9,11 +16,27 @@ terraform {
       source  = "kreuzwerker/docker"
       version = ">= 3.0.2"
     }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = ">= 6.35.0"
+    }
+    # Declared here so the root module (and its tests) resolve the same
+    # terracurl provider as ./byo-project instead of hashicorp/terracurl.
+    terracurl = {
+      source  = "devops-rob/terracurl"
+      version = "~> 1.0"
+    }
+    # Same constraint as ./byo-project (CMEK IAM propagation time_sleep).
+    time = {
+      source  = "hashicorp/time"
+      version = ">= 0.9.0"
+    }
   }
 }
 
 provider "google" {
-  # Credentials used here need Org/Folder level permissions
+  project        = var.project_id
+  region         = var.region
   default_labels = var.labels
 }
 
@@ -24,45 +47,35 @@ provider "docker" {
   }
 }
 
+locals {
+  # Use project_factory output when creating project, otherwise use provided project_id
+  effective_project_id = var.create_project ? module.project_factory[0].project_id : var.project_id
+}
 
 module "project_factory" {
+  count   = var.create_project ? 1 : 0
   source  = "terraform-google-modules/project-factory/google"
   version = "~> 18.0.0"
 
   name              = var.project_name
   random_project_id = var.random_project_id
-  org_id            = var.org_id
+  org_id            = var.folder_id == null ? var.org_id : ""
+  folder_id         = var.folder_id == null ? "" : var.folder_id
   billing_account   = var.billing_account_id
 
   default_service_account = "delete"
 
   # Enable baseline APIs needed by most projects + your app stack
-  activate_apis = [
-    "compute.googleapis.com",
-    "sqladmin.googleapis.com",
-    "redis.googleapis.com",
-    "run.googleapis.com",
-    "vpcaccess.googleapis.com",
-    "secretmanager.googleapis.com",
-    "storage.googleapis.com",
-    "dns.googleapis.com",
-    "iam.googleapis.com",
-    "cloudresourcemanager.googleapis.com",
-    "serviceusage.googleapis.com",
-    "servicenetworking.googleapis.com",
-    "logging.googleapis.com",
-    "monitoring.googleapis.com",
-    "memorystore.googleapis.com",
-    "serviceconsumermanagement.googleapis.com",
-    "networkconnectivity.googleapis.com",
+  # Upstream baseline plus the fork's extra services (Okta mTLS, Pub/Sub log
+  # destination, GeoLite2 image build + monthly refresh). The module dedupes.
+  activate_apis = concat(local.baseline_project_apis, var.extra_apis, [
     "networksecurity.googleapis.com",
-    "certificatemanager.googleapis.com",
     "dataflow.googleapis.com",
     "pubsub.googleapis.com",
     "artifactregistry.googleapis.com",
     "cloudbuild.googleapis.com",
-    "cloudscheduler.googleapis.com"
-  ]
+    "cloudscheduler.googleapis.com",
+  ])
 
   labels = var.labels
 }
@@ -72,7 +85,7 @@ module "project_factory" {
 # -------------------------------------
 
 resource "google_service_account" "fleet_calendar" {
-  project      = module.project_factory.project_id
+  project      = local.effective_project_id
   account_id   = "fleet-calendar-events"
   display_name = "Fleet Calendar Events"
   description  = "Service account for Fleet to create calendar events for end users with failing policies"
@@ -83,7 +96,7 @@ resource "google_service_account_key" "fleet_calendar" {
 }
 
 resource "google_secret_manager_secret" "fleet_calendar_key" {
-  project   = module.project_factory.project_id
+  project   = local.effective_project_id
   secret_id = "fleet-calendar-service-account-key"
   replication {
     auto {}
@@ -106,7 +119,7 @@ output "fleet_calendar_service_account_key_json" {
 # -------------------------------------
 
 resource "google_secret_manager_secret" "mdm_wstep_cert" {
-  project   = module.project_factory.project_id
+  project   = local.effective_project_id
   secret_id = "fleet-mdm-wstep-identity-cert"
   replication {
     auto {}
@@ -120,7 +133,7 @@ resource "google_secret_manager_secret_version" "mdm_wstep_cert" {
 }
 
 resource "google_secret_manager_secret" "mdm_wstep_key" {
-  project   = module.project_factory.project_id
+  project   = local.effective_project_id
   secret_id = "fleet-mdm-wstep-identity-key"
   replication {
     auto {}
@@ -152,7 +165,7 @@ locals {
 
 module "okta_conditional_access" {
   source                  = "../addons/gcp/okta-conditional-access"
-  project_id              = module.project_factory.project_id
+  project_id              = local.effective_project_id
   ca_certificate_pem_file = "${path.module}/resources/conditional-ca.pem"
   fleet_domain            = "fleet.campusgroup.co"
 }
@@ -163,7 +176,7 @@ module "okta_conditional_access" {
 
 module "logging_destination_pubsub" {
   source     = "../addons/gcp/logging-destination-pubsub"
-  project_id = module.project_factory.project_id
+  project_id = local.effective_project_id
   labels     = var.labels
 
   add_attributes                   = true
@@ -173,17 +186,21 @@ module "logging_destination_pubsub" {
 resource "google_pubsub_topic_iam_member" "fleet_run_sa_publisher" {
   for_each = module.logging_destination_pubsub.topic_names
 
-  project = module.project_factory.project_id
+  project = local.effective_project_id
   topic   = each.value
   role    = "roles/pubsub.publisher"
   member  = "serviceAccount:${module.fleet.fleet_service_account_email}"
 }
 
 module "fleet" {
-  source          = "./byo-project"
-  project_id      = module.project_factory.project_id
-  dns_record_name = var.dns_record_name
+  source = "./byo-project"
+
+  project_id      = local.effective_project_id
+  region          = var.region
+  location        = var.location
   dns_zone_name   = var.dns_zone_name
+  dns_record_name = var.dns_record_name
+  dns_config      = var.dns_config
   vpc_config      = var.vpc_config
   fleet_config = merge(var.fleet_config, {
     # Pin to the pushed manifest digest, not the tag. The kreuzwerker/docker
@@ -201,16 +218,31 @@ module "fleet" {
       local.windows_mdm_secret_env_vars,
     )
   })
+  cache_config         = var.cache_config
+  database_config      = var.database_config
+  load_balancer_config = var.load_balancer_config
+  cmek                 = var.cmek
+  cloud_armor          = var.cloud_armor
+  replicate_secrets    = var.replicate_secrets
+  allow_destroy        = var.allow_destroy
+
+  # Wait after per-service CMEK grants; no-op unless a per-service consumer
+  # (cmek.cloud_sql/redis/cloud_run/secret_manager) is set.
+  cmek_iam_propagation_delay_seconds = var.cmek_iam_propagation_delay_seconds
+
+  # Installers bucket versioning and noncurrent-version retention.
+  software_installers_config = var.software_installers_config
+
+  # Wait for opted-in existing-project APIs to be enabled before creating any
+  # Fleet resources. Empty (no-op) unless manage_existing_project_apis = true
+  # and create_project = false.
+  depends_on = [google_project_service.existing_project_apis]
+
   # OTel env vars only on the Cloud Run services — not on the migration job.
   # The job runs as a Cloud Run Job (no sidecars), so localhost:4317 has no
   # listener and the exporter would log retry errors during the brief job run.
   service_only_env_vars = local.fleet_otel_env_vars
   sidecar_containers    = [local.datadog_sidecar]
-
-  cache_config    = var.cache_config
-  database_config = var.database_config
-  region          = var.region
-  location        = var.location
 
   server_tls_policy              = module.okta_conditional_access.server_tls_policy
   backend_custom_request_headers = [module.okta_conditional_access.client_cert_header]
@@ -247,11 +279,11 @@ module "fleet" {
 
 locals {
   fleet_upstream_image = var.fleet_config.image_tag
-  fleet_geolite2_image = "${google_artifact_registry_repository.fleet.location}-docker.pkg.dev/${module.project_factory.project_id}/${google_artifact_registry_repository.fleet.repository_id}/fleet-geolite2:${replace(local.fleet_upstream_image, "/.*:/", "")}"
+  fleet_geolite2_image = "${google_artifact_registry_repository.fleet.location}-docker.pkg.dev/${local.effective_project_id}/${google_artifact_registry_repository.fleet.repository_id}/fleet-geolite2:${replace(local.fleet_upstream_image, "/.*:/", "")}"
 }
 
 resource "google_artifact_registry_repository" "fleet" {
-  project       = module.project_factory.project_id
+  project       = local.effective_project_id
   location      = var.region
   repository_id = "fleet"
   format        = "DOCKER"
@@ -277,7 +309,7 @@ module "geolite2" {
 }
 
 resource "google_secret_manager_secret" "maxmind_license_key" {
-  project   = module.project_factory.project_id
+  project   = local.effective_project_id
   secret_id = "maxmind-license-key"
   replication {
     auto {}
@@ -294,7 +326,7 @@ resource "google_secret_manager_secret_version" "maxmind_license_key" {
 # -------------------------------------
 
 resource "google_service_account" "geolite2_refresh" {
-  project      = module.project_factory.project_id
+  project      = local.effective_project_id
   account_id   = "geolite2-refresh"
   display_name = "GeoLite2 image refresh"
   description  = "Service account Cloud Scheduler uses to trigger monthly GeoLite2 image rebuilds"
@@ -319,14 +351,14 @@ resource "google_artifact_registry_repository_iam_member" "cloudbuild_writer" {
 }
 
 resource "google_project_iam_member" "geolite2_refresh_run_builds" {
-  project = module.project_factory.project_id
+  project = local.effective_project_id
   role    = "roles/cloudbuild.builds.editor"
   member  = "serviceAccount:${google_service_account.geolite2_refresh.email}"
 }
 
 # CLOUD_LOGGING_ONLY requires the build SA to write its own logs.
 resource "google_project_iam_member" "geolite2_refresh_log_writer" {
-  project = module.project_factory.project_id
+  project = local.effective_project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.geolite2_refresh.email}"
 }
@@ -401,7 +433,7 @@ locals {
     availableSecrets = {
       secretManager = [
         {
-          versionName = "projects/${module.project_factory.project_id}/secrets/${google_secret_manager_secret.maxmind_license_key.secret_id}/versions/latest"
+          versionName = "projects/${local.effective_project_id}/secrets/${google_secret_manager_secret.maxmind_license_key.secret_id}/versions/latest"
           env         = "LICENSE_KEY"
         }
       ]
@@ -419,7 +451,7 @@ locals {
 }
 
 resource "google_cloud_scheduler_job" "geolite2_refresh" {
-  project     = module.project_factory.project_id
+  project     = local.effective_project_id
   region      = var.region
   name        = "geolite2-refresh"
   description = "Rebuild Fleet GeoLite2 image on the first of each month (MaxMind license requires monthly refresh)."
@@ -428,7 +460,7 @@ resource "google_cloud_scheduler_job" "geolite2_refresh" {
 
   http_target {
     http_method = "POST"
-    uri         = "https://cloudbuild.googleapis.com/v1/projects/${module.project_factory.project_id}/builds"
+    uri         = "https://cloudbuild.googleapis.com/v1/projects/${local.effective_project_id}/builds"
     headers = {
       "Content-Type" = "application/json"
     }
